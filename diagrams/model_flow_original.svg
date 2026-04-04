@@ -1,0 +1,148 @@
+﻿<svg xmlns="http://www.w3.org/2000/svg" width="1700" height="2320" viewBox="0 0 1700 2320">
+  <defs>
+    <style>
+      .t{font:700 30px 'Segoe UI',Arial,sans-serif;fill:#111827}
+      .h{font:700 18px 'Segoe UI',Arial,sans-serif;fill:#111827}
+      .p{font:400 15px 'Segoe UI',Arial,sans-serif;fill:#1f2937}
+      .a{stroke:#475569;stroke-width:3;fill:none;marker-end:url(#m)}
+    </style>
+    <marker id="m" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+      <polygon points="0 0,10 4,0 8" fill="#475569"/>
+    </marker>
+  </defs>
+  <rect width="1700" height="2320" fill="#f8fafc"/>
+  <text x="60" y="55" class="t">Original Mermaid Flowchart Export</text>
+
+  <rect x="640" y="90" width="420" height="90" rx="16" fill="#dbeafe" stroke="#93c5fd" stroke-width="2"/>
+  <text x="670" y="130" class="h">输入数据</text><text x="670" y="160" class="p">split_x.csv + label.csv</text>
+
+  <rect x="610" y="220" width="480" height="90" rx="16" fill="#e0f2fe" stroke="#7dd3fc" stroke-width="2"/>
+  <text x="640" y="260" class="h">MultiModalFeatureDataset</text><text x="640" y="290" class="p">读取 slide_id</text>
+
+  <rect x="120" y="380" width="360" height="100" rx="16" fill="#dcfce7" stroke="#86efac" stroke-width="2"/>
+  <text x="150" y="420" class="h">图像特征</text><text x="150" y="450" class="p">image_dir/slide_id.pt</text><text x="150" y="475" class="p">[n, 512]</text>
+  <rect x="670" y="380" width="360" height="100" rx="16" fill="#fef3c7" stroke="#fcd34d" stroke-width="2"/>
+  <text x="700" y="420" class="h">文本特征</text><text x="700" y="450" class="p">text_dir/case_id.pt</text><text x="700" y="475" class="p">[N, 512]</text>
+  <rect x="1220" y="380" width="320" height="100" rx="16" fill="#fee2e2" stroke="#fca5a5" stroke-width="2"/>
+  <text x="1250" y="420" class="h">标签 y</text><text x="1250" y="450" class="p">仅 source/train 有监督</text>
+
+  <rect x="120" y="540" width="360" height="90" rx="16" fill="#ede9fe" stroke="#c4b5fd" stroke-width="2"/>
+  <text x="150" y="580" class="h">SharedMapper</text><text x="150" y="610" class="p">共享映射网络</text>
+  <rect x="670" y="540" width="360" height="90" rx="16" fill="#ede9fe" stroke="#c4b5fd" stroke-width="2"/>
+  <text x="700" y="580" class="h">SharedMapper</text><text x="700" y="610" class="p">共享映射网络</text>
+
+  <rect x="120" y="690" width="360" height="90" rx="16" fill="#fae8ff" stroke="#d8b4fe" stroke-width="2"/>
+  <text x="150" y="730" class="h">AttentionPooling</text><text x="150" y="760" class="p">图像序列池化</text>
+  <rect x="670" y="690" width="360" height="90" rx="16" fill="#fae8ff" stroke="#d8b4fe" stroke-width="2"/>
+  <text x="700" y="730" class="h">AttentionPooling</text><text x="700" y="760" class="p">文本序列池化</text>
+
+  <rect x="170" y="830" width="260" height="80" rx="16" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="2"/>
+  <text x="210" y="878" class="h">img_vec [B, D]</text>
+  <rect x="720" y="830" width="260" height="80" rx="16" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="2"/>
+  <text x="760" y="878" class="h">txt_vec [B, D]</text>
+
+  <rect x="530" y="970" width="340" height="90" rx="16" fill="#e0f2fe" stroke="#7dd3fc" stroke-width="2"/>
+  <text x="560" y="1010" class="h">MoEFusion</text><text x="560" y="1040" class="p">路由融合</text>
+
+  <rect x="90" y="1110" width="340" height="90" rx="16" fill="#cffafe" stroke="#67e8f9" stroke-width="2"/>
+  <text x="120" y="1150" class="h">Expert 1</text><text x="120" y="1180" class="p">Concat + Self-Attention</text>
+  <rect x="530" y="1110" width="340" height="90" rx="16" fill="#cffafe" stroke="#67e8f9" stroke-width="2"/>
+  <text x="560" y="1150" class="h">Expert 2</text><text x="560" y="1180" class="p">Add + Self-Attention</text>
+  <rect x="970" y="1110" width="340" height="90" rx="16" fill="#cffafe" stroke="#67e8f9" stroke-width="2"/>
+  <text x="1000" y="1150" class="h">Expert 3</text><text x="1000" y="1180" class="p">Cross-Attention</text>
+
+  <rect x="530" y="1250" width="340" height="90" rx="16" fill="#d1fae5" stroke="#6ee7b7" stroke-width="2"/>
+  <text x="560" y="1300" class="h">Router 加权求和</text>
+  <rect x="560" y="1390" width="280" height="80" rx="16" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="2"/>
+  <text x="590" y="1438" class="h">fused feature [B, D]</text>
+  <rect x="560" y="1510" width="280" height="80" rx="16" fill="#e9d5ff" stroke="#c084fc" stroke-width="2"/>
+  <text x="605" y="1558" class="h">StageClassifier</text>
+  <rect x="560" y="1630" width="280" height="80" rx="16" fill="#fce7f3" stroke="#f9a8d4" stroke-width="2"/>
+  <text x="585" y="1678" class="h">logits / probs / preds</text>
+
+  <rect x="1180" y="1625" width="360" height="100" rx="16" fill="#fee2e2" stroke="#fca5a5" stroke-width="2"/>
+  <text x="1210" y="1665" class="h">分类损失 CrossEntropy</text><text x="1210" y="1695" class="p">loss_cls</text>
+
+  <rect x="60" y="970" width="360" height="80" rx="16" fill="#ede9fe" stroke="#c4b5fd" stroke-width="2"/>
+  <text x="90" y="1018" class="h">source 图像 patch mapped features</text>
+  <rect x="60" y="1090" width="360" height="80" rx="16" fill="#ede9fe" stroke="#c4b5fd" stroke-width="2"/>
+  <text x="90" y="1138" class="h">target 图像 patch mapped features</text>
+  <rect x="40" y="1210" width="400" height="100" rx="16" fill="#fff7ed" stroke="#fdba74" stroke-width="2"/>
+  <text x="70" y="1250" class="h">build_graph_features</text><text x="70" y="1280" class="p">KMeans 节点 + TopK 构图 + hop topology</text>
+  <rect x="40" y="1350" width="400" height="100" rx="16" fill="#fff7ed" stroke="#fdba74" stroke-width="2"/>
+  <text x="70" y="1390" class="h">build_graph_features</text><text x="70" y="1420" class="p">KMeans 节点 + TopK 构图 + hop topology</text>
+
+  <rect x="40" y="1490" width="180" height="80" rx="16" fill="#f8fafc" stroke="#cbd5e1" stroke-width="2"/>
+  <text x="70" y="1538" class="h">node features</text>
+  <rect x="260" y="1490" width="180" height="80" rx="16" fill="#f8fafc" stroke="#cbd5e1" stroke-width="2"/>
+  <text x="290" y="1538" class="h">node features</text>
+  <rect x="40" y="1610" width="180" height="80" rx="16" fill="#f8fafc" stroke="#cbd5e1" stroke-width="2"/>
+  <text x="50" y="1658" class="h">topology features</text>
+  <rect x="260" y="1610" width="180" height="80" rx="16" fill="#f8fafc" stroke="#cbd5e1" stroke-width="2"/>
+  <text x="270" y="1658" class="h">topology features</text>
+
+  <rect x="520" y="1770" width="220" height="80" rx="16" fill="#ede9fe" stroke="#c4b5fd" stroke-width="2"/>
+  <text x="600" y="1803" class="h">MMD</text><text x="575" y="1833" class="p">loss_node</text>
+  <rect x="800" y="1770" width="220" height="80" rx="16" fill="#ede9fe" stroke="#c4b5fd" stroke-width="2"/>
+  <text x="880" y="1803" class="h">MMD</text><text x="855" y="1833" class="p">loss_topo</text>
+
+  <rect x="1080" y="970" width="420" height="80" rx="16" fill="#e0f2fe" stroke="#7dd3fc" stroke-width="2"/>
+  <text x="1110" y="1018" class="h">source 文本 mapped features 求均值</text>
+  <rect x="1080" y="1090" width="420" height="80" rx="16" fill="#e0f2fe" stroke="#7dd3fc" stroke-width="2"/>
+  <text x="1110" y="1138" class="h">target 文本 mapped features 求均值</text>
+  <rect x="1180" y="1220" width="220" height="80" rx="16" fill="#ede9fe" stroke="#c4b5fd" stroke-width="2"/>
+  <text x="1260" y="1253" class="h">MMD</text><text x="1240" y="1283" class="p">loss_txt</text>
+
+  <rect x="1120" y="1930" width="260" height="90" rx="16" fill="#d1fae5" stroke="#6ee7b7" stroke-width="2"/>
+  <text x="1210" y="1980" class="h">总损失</text>
+  <rect x="420" y="2080" width="860" height="100" rx="16" fill="#fef3c7" stroke="#fcd34d" stroke-width="2"/>
+  <text x="450" y="2122" class="h">loss = loss_cls + decay * (alpha*loss_txt + beta*loss_node + gamma*loss_topo)</text>
+
+  <path d="M850 180 L850 220" class="a"/>
+  <path d="M850 310 L300 380" class="a"/>
+  <path d="M850 310 L850 380" class="a"/>
+  <path d="M850 310 L1380 380" class="a"/>
+  <path d="M300 480 L300 540" class="a"/>
+  <path d="M850 480 L850 540" class="a"/>
+  <path d="M300 630 L300 690" class="a"/>
+  <path d="M850 630 L850 690" class="a"/>
+  <path d="M300 780 L300 830" class="a"/>
+  <path d="M850 780 L850 830" class="a"/>
+  <path d="M300 910 L700 970" class="a"/>
+  <path d="M850 910 L700 970" class="a"/>
+  <path d="M700 1060 L260 1110" class="a"/>
+  <path d="M700 1060 L700 1110" class="a"/>
+  <path d="M700 1060 L1140 1110" class="a"/>
+  <path d="M260 1200 L700 1250" class="a"/>
+  <path d="M700 1200 L700 1250" class="a"/>
+  <path d="M1140 1200 L700 1250" class="a"/>
+  <path d="M700 1340 L700 1390" class="a"/>
+  <path d="M700 1470 L700 1510" class="a"/>
+  <path d="M700 1590 L700 1630" class="a"/>
+  <path d="M840 1670 L1180 1670" class="a"/>
+  <path d="M1380 480 L1380 1625" class="a"/>
+
+  <path d="M300 630 L240 970" class="a"/>
+  <path d="M300 630 L240 1090" class="a"/>
+  <path d="M850 630 L1290 970" class="a"/>
+  <path d="M850 630 L1290 1090" class="a"/>
+  <path d="M240 1050 L240 1210" class="a"/>
+  <path d="M240 1170 L240 1350" class="a"/>
+  <path d="M240 1310 L130 1490" class="a"/>
+  <path d="M240 1310 L350 1490" class="a"/>
+  <path d="M240 1450 L130 1610" class="a"/>
+  <path d="M240 1450 L350 1610" class="a"/>
+  <path d="M220 1530 L520 1810" class="a"/>
+  <path d="M440 1530 L520 1810" class="a"/>
+  <path d="M220 1650 L800 1810" class="a"/>
+  <path d="M440 1650 L800 1810" class="a"/>
+
+  <path d="M1290 1050 L1290 1220" class="a"/>
+  <path d="M1290 1170 L1290 1220" class="a"/>
+
+  <path d="M1360 1725 L1250 1930" class="a"/>
+  <path d="M740 1810 L1180 1970" class="a"/>
+  <path d="M1020 1810 L1210 1970" class="a"/>
+  <path d="M1290 1300 L1270 1930" class="a"/>
+  <path d="M1250 2020 L850 2080" class="a"/>
+</svg>

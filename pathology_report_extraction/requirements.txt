@@ -1,0 +1,6 @@
+﻿PyMuPDF>=1.27.2
+rapidocr_onnxruntime>=1.4.4
+opencv-python>=4.10.0
+Pillow>=10.0.0
+numpy>=1.24.0
+PyYAML>=6.0

@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+
+# IDE / local env
+.idea/
+.vscode/
+.venv/
+.venv_pathology/
+env/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Training / experiment outputs
+experiments/
+*.log
+
+# Pathology report pipeline outputs
+pathology_report_extraction/Output/
+pathology_report_extraction/_paper_tmp/
+pathology_report_extraction/__pycache__/
+
+# Temporary artifacts
+tmp_*/

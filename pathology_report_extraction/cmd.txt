@@ -1,0 +1,103 @@
+病理报告文本流程命令清单
+目录：D:\Tasks\isbi_code\pathology_report_extraction
+
+说明：
+1. 下面命令可直接在 Windows PowerShell 中运行。
+2. 当前统一使用一个总控配置文件：
+   D:\Tasks\isbi_code\pathology_report_extraction\config\pipeline.yaml
+3. 当前默认输入目录：
+   D:\Tasks\Pathology Report
+4. 当前默认输出根目录：
+   D:\Tasks\isbi_code\pathology_report_extraction\Output
+5. 当前主实验推荐模式：
+   masked
+6. 文本图生成后，可继续生成训练用 manifest。
+
+==================================================
+一、进入目录
+==================================================
+cd /d D:\Tasks\isbi_code\pathology_report_extraction
+
+==================================================
+二、激活环境
+==================================================
+conda activate pytorch
+
+如果不想手动激活，也可直接使用：
+D:\ProgrammeFiles\Anaconda\envs\Pytorch\python.exe
+
+==================================================
+三、安装依赖
+==================================================
+D:\ProgrammeFiles\Anaconda\envs\Pytorch\python.exe -m pip install -r D:\Tasks\isbi_code\pathology_report_extraction\requirements.txt
+
+==================================================
+四、查看帮助
+==================================================
+D:\ProgrammeFiles\Anaconda\envs\Pytorch\python.exe D:\Tasks\isbi_code\pathology_report_extraction\run_pipeline.py --help
+
+==================================================
+五、推荐的一键式命令
+==================================================
+
+[1] 按 pipeline.yaml 全量运行整条流程
+D:\ProgrammeFiles\Anaconda\envs\Pytorch\python.exe D:\Tasks\isbi_code\pathology_report_extraction\run_pipeline.py --config "D:\Tasks\isbi_code\pathology_report_extraction\config\pipeline.yaml"
+
+[2] 小样本调试，只跑前 10 个
+D:\ProgrammeFiles\Anaconda\envs\Pytorch\python.exe D:\Tasks\isbi_code\pathology_report_extraction\run_pipeline.py --config "D:\Tasks\isbi_code\pathology_report_extraction\config\pipeline.yaml" --limit 10
+
+[3] 临时切到 full 模式
+D:\ProgrammeFiles\Anaconda\envs\Pytorch\python.exe D:\Tasks\isbi_code\pathology_report_extraction\run_pipeline.py --config "D:\Tasks\isbi_code\pathology_report_extraction\config\pipeline.yaml" --filter_mode full
+
+==================================================
+六、单独运行某一步
+==================================================
+
+[1] 只跑预处理
+D:\ProgrammeFiles\Anaconda\envs\Pytorch\python.exe D:\Tasks\isbi_code\pathology_report_extraction\preprocess_pathology_reports.py --config "D:\Tasks\isbi_code\pathology_report_extraction\config\pipeline.yaml"
+
+[2] 只跑句子导出
+D:\ProgrammeFiles\Anaconda\envs\Pytorch\python.exe D:\Tasks\isbi_code\pathology_report_extraction\export_sentence_views.py --config "D:\Tasks\isbi_code\pathology_report_extraction\config\pipeline.yaml"
+
+[3] 只跑 CONCH 句子编码
+D:\ProgrammeFiles\Anaconda\envs\Pytorch\python.exe D:\Tasks\isbi_code\pathology_report_extraction\encode_sentence_exports_conch.py --config "D:\Tasks\isbi_code\pathology_report_extraction\config\pipeline.yaml"
+
+[4] 只跑文本层次图构建
+D:\ProgrammeFiles\Anaconda\envs\Pytorch\python.exe D:\Tasks\isbi_code\pathology_report_extraction\build_text_hierarchy_graphs.py --config "D:\Tasks\isbi_code\pathology_report_extraction\config\pipeline.yaml"
+
+[5] 只跑文本图 manifest 生成
+D:\ProgrammeFiles\Anaconda\envs\Pytorch\python.exe D:\Tasks\isbi_code\pathology_report_extraction\prepare_text_graph_manifest.py --config "D:\Tasks\isbi_code\pathology_report_extraction\config\pipeline.yaml"
+
+==================================================
+七、常见调试方式
+==================================================
+
+[1] 不改 yaml，临时切换 no_diagnosis
+D:\ProgrammeFiles\Anaconda\envs\Pytorch\python.exe D:\Tasks\isbi_code\pathology_report_extraction\run_pipeline.py --config "D:\Tasks\isbi_code\pathology_report_extraction\config\pipeline.yaml" --filter_mode no_diagnosis
+
+[2] 不改 yaml，临时切换 no_diagnosis_masked
+D:\ProgrammeFiles\Anaconda\envs\Pytorch\python.exe D:\Tasks\isbi_code\pathology_report_extraction\run_pipeline.py --config "D:\Tasks\isbi_code\pathology_report_extraction\config\pipeline.yaml" --filter_mode no_diagnosis_masked
+
+[3] 只调试预处理并限制 10 个
+D:\ProgrammeFiles\Anaconda\envs\Pytorch\python.exe D:\Tasks\isbi_code\pathology_report_extraction\preprocess_pathology_reports.py --config "D:\Tasks\isbi_code\pathology_report_extraction\config\pipeline.yaml" --limit 10
+
+==================================================
+八、配置文件位置
+==================================================
+
+D:\Tasks\isbi_code\pathology_report_extraction\config\pipeline.yaml
+
+==================================================
+九、当前推荐
+==================================================
+
+如果目标是训练当前论文风格的病理分期文本/多模态模型：
+- 主实验：masked
+- 对照一：no_diagnosis
+- 对照二：no_diagnosis_masked
+
+推荐先用这一条：
+D:\ProgrammeFiles\Anaconda\envs\Pytorch\python.exe D:\Tasks\isbi_code\pathology_report_extraction\run_pipeline.py --config "D:\Tasks\isbi_code\pathology_report_extraction\config\pipeline.yaml"
+
+如果文本图已经准备好，下一条通常就是：
+D:\ProgrammeFiles\Anaconda\envs\Pytorch\python.exe D:\Tasks\isbi_code\pathology_report_extraction\prepare_text_graph_manifest.py --config "D:\Tasks\isbi_code\pathology_report_extraction\config\pipeline.yaml"

@@ -1,0 +1,124 @@
+seed: 23
+
+data:
+  # =========================
+  # 这一个 yaml 就是训练总配置入口
+  # 以后只改这里，不需要再切换别的 yaml
+  # =========================
+
+  # 当前默认示例：
+  # KIRC + 层次图文本特征（hierarchy_graph）
+  split_file: D:\Tasks\split_0.csv
+  label_file: D:\Tasks\Pathologic_Stage_Label\KIRC_pathologic_stage.csv
+  image_dir: D:\CLAM_output\features\pt_files
+  text_dir: D:\Tasks\isbi_code\pathology_report_extraction\Output\text_hierarchy_graphs_masked\KIRC
+
+  # 文本模式二选一：
+  # 1. sentence_pt
+  #    论文原始方式，读取 case-level 句子特征 pt
+  #    例如：
+  #    D:\Tasks\text_extract_features\KIRC_text
+  #    D:\Tasks\text_extract_features\BRCA_text
+  #    D:\Tasks\text_extract_features\LUSC_text
+  #
+  # 2. hierarchy_graph
+  #    当前新增方式，读取层次图 pt 字典
+  #    例如：
+  #    D:\Tasks\isbi_code\pathology_report_extraction\Output\text_hierarchy_graphs_masked\KIRC
+  #    D:\Tasks\isbi_code\pathology_report_extraction\Output\text_hierarchy_graphs_masked\BRCA
+  text_mode: hierarchy_graph
+
+  # 只有在 text_mode: hierarchy_graph 时才会使用这个字段
+  # 可选：
+  # - node_features: Document + Section + Sentence 三层节点一起作为文本输入
+  # - sentence_features: 只用句子节点特征
+  # - section_features: 只用 section 节点特征
+  # - document_feature: 只用 document 节点特征（会自动扩成 1 x 512）
+  text_graph_feature: node_features
+
+  # -------------------------
+  # 常见切换示例
+  # -------------------------
+  #
+  # A. 切到 BRCA + 层次图文本：
+  # split_file: D:\Tasks\CLAM-master\results\stage_classification_s1\splits_149.csv
+  # label_file: D:\Tasks\Pathologic_Stage_Label\BRCA_pathologic_stage.csv
+  # text_dir: D:\Tasks\isbi_code\pathology_report_extraction\Output\text_hierarchy_graphs_masked\BRCA
+  # text_mode: hierarchy_graph
+  # text_graph_feature: node_features
+  #
+  # B. 切到 KIRC + 原论文句子文本：
+  # split_file: D:\Tasks\split_0.csv
+  # label_file: D:\Tasks\Pathologic_Stage_Label\KIRC_pathologic_stage.csv
+  # text_dir: D:\Tasks\text_extract_features\KIRC_text
+  # text_mode: sentence_pt
+  #
+  # C. 切到 BRCA + 原论文句子文本：
+  # split_file: D:\Tasks\CLAM-master\results\stage_classification_s1\splits_149.csv
+  # label_file: D:\Tasks\Pathologic_Stage_Label\BRCA_pathologic_stage.csv
+  # text_dir: D:\Tasks\text_extract_features\BRCA_text
+  # text_mode: sentence_pt
+  #
+  # D. 切到 LUSC + 原论文句子文本：
+  # split_file: D:\TCGA\LUSC_WSI_extract_features\features\Splits\split_149.csv
+  # label_file: D:\Tasks\Pathologic_Stage_Label\LUSC_pathologic_stage.csv
+  # text_dir: D:\Tasks\text_extract_features\LUSC_text
+  # text_mode: sentence_pt
+  #
+  # 注意：
+  # - image_dir 需要填真实的 WSI 特征 pt 目录，多模态训练才可正常运行
+  # - label_file 现在统一使用与 LUSC 相同格式：case_id, slide_id, label
+
+graph:
+  num_nodes_m: 64
+  topk_k: 16
+  kmeans_iters: 10
+  max_patches_for_kmeans: 2048
+
+model:
+  feat_dim: 512
+  mapper_hidden: 1024
+  mapper_depth: 2
+  mapper_dropout: 0.1
+  attn_pool_hidden: 256
+  attn_pool_dropout: 0.1
+  moe_heads: 8
+  moe_dropout: 0.1
+  moe_tau_start: 1.0
+  moe_tau_min: 0.1
+  moe_tau_decay: 0.95
+  moe_hard_start_epoch: 10
+  classifier_hidden: 256
+  classifier_dropout: 0.2
+
+loss:
+  warmup_epochs: 3
+  align_decay_to: 0.3
+  alpha_txt: 0.5
+  beta_node: 0.1
+  gamma_topo: 0.1
+  mmd_num_kernels: 3
+  mmd_sigma_multipliers:
+    - 0.5
+    - 1.0
+    - 2.0
+  mmd_unbiased: true
+  mmd_clamp_nonneg: true
+
+train:
+  num_epochs: 60
+  batch_size: 4
+  num_workers: 4
+  lr: 0.0001
+  weight_decay: 0.01
+  grad_clip: 1.0
+  early_stop_patience: 10
+  early_stop_min_delta: 0.0001
+
+output:
+  # 建议按实验自行改名，避免覆盖
+  # 例如：
+  # D:\Tasks\isbi_code\experiments\kirc_split0_hierarchy_graph
+  # D:\Tasks\isbi_code\experiments\brca_split149_sentence_pt
+  exp_dir: D:\Tasks\isbi_code\experiments\kirc_split0_hierarchy_graph
+  save_best_by: val_avg

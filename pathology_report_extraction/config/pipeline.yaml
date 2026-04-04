@@ -1,0 +1,129 @@
+# pathology_report_extraction 总控配置文件。
+# 以后主要改这一个 yaml，就可以切换模式或调整整条流程参数。
+#
+# 阶段顺序：
+# 1. preprocess
+# 2. export_sentence_views
+# 3. encode_sentence_exports_conch
+# 4. build_text_hierarchy_graphs
+# 5. prepare_text_graph_manifest（可选，默认关闭）
+
+defaults:
+  # 原始病理报告 PDF 根目录。
+  input_dir: D:\Tasks\Pathology Report
+
+  # 统一输出根目录。所有阶段的结果都会写到这里。
+  output_root: D:\Tasks\isbi_code\pathology_report_extraction\Output
+
+  # 全局调试上限。留空表示全量运行。
+  limit:
+
+preprocess:
+  enabled: true
+
+  # 预处理模式。
+  # 推荐主实验使用 masked。
+  # 可选值：full / no_diagnosis / masked / no_diagnosis_masked
+  filter_mode: masked
+
+  # 当页面原生提取字符数低于该阈值时，自动启用 OCR。
+  native_char_threshold: 40
+
+  # OCR 回退时的 PDF 栅格化放大倍率。
+  ocr_zoom: 2.0
+
+  # 不同 filter_mode 对应的预处理输出子目录。
+  # 一般不需要改，切换 filter_mode 时会自动切换到对应目录。
+  output_subdirs:
+    masked: pathology_report_preprocessed_masked
+    no_diagnosis: pathology_report_preprocessed_no_diagnosis
+    no_diagnosis_masked: pathology_report_preprocessed_no_diagnosis_masked
+    full: pathology_report_preprocessed_full
+
+export_sentence_views:
+  enabled: true
+
+  # 是否额外导出便于人工查看的 txt 文件。
+  write_txt: true
+
+  # 如果不手动指定 input_dir，就自动接上 preprocess 的输出目录。
+  # input_dir:
+
+  # 如果不手动指定 output_dir，就自动使用：
+  # output_root + output_subdirs[当前 filter_mode]
+  # output_dir:
+  output_subdirs:
+    masked: sentence_exports_masked
+    no_diagnosis: sentence_exports_no_diagnosis
+    no_diagnosis_masked: sentence_exports_no_diagnosis_masked
+    full: sentence_exports_full
+
+encode_sentence_exports_conch:
+  enabled: true
+
+  # 本地 CONCH 仓库和权重文件路径。
+  conch_repo_dir: D:\Tasks\CLAM-master
+  checkpoint_path: D:\Tasks\CLAM-master\ckpts\pytorch_model.bin
+
+  # 句子编码 batch size。
+  batch_size: 64
+
+  # 设备选择：auto / cuda / cpu。
+  device: auto
+
+  # 如果不手动指定 input_dir，就自动接上句子导出结果目录。
+  # input_dir:
+
+  # 如果不手动指定 output_dir，就自动使用：
+  # output_root + output_subdirs[当前 filter_mode]
+  # output_dir:
+  output_subdirs:
+    masked: sentence_embeddings_conch_masked
+    no_diagnosis: sentence_embeddings_conch_no_diagnosis
+    no_diagnosis_masked: sentence_embeddings_conch_no_diagnosis_masked
+    full: sentence_embeddings_conch_full
+
+build_text_hierarchy_graphs:
+  enabled: true
+
+  # 如果不手动指定 input_dir，就自动接上 CONCH 编码输出目录。
+  # input_dir:
+
+  # 如果不手动指定 output_dir，就自动使用：
+  # output_root + output_subdirs[当前 filter_mode]
+  # output_dir:
+  output_subdirs:
+    masked: text_hierarchy_graphs_masked
+    no_diagnosis: text_hierarchy_graphs_no_diagnosis
+    no_diagnosis_masked: text_hierarchy_graphs_no_diagnosis_masked
+    full: text_hierarchy_graphs_full
+
+prepare_text_graph_manifest:
+  # 这一步默认关闭。
+  # 需要时可改成 true，用于把文本图和标签整理成训练 manifest。
+  enabled: false
+
+  # 分期标签文件。需要包含 case_id, slide_id, label 三列。
+  label_csv: D:\Tasks\pathologic_stage.csv
+
+  # 可选的 split 文件。
+  # 支持：
+  # 1. 列格式 slide_id, split
+  # 2. 列格式 case_id, split
+  # 3. 原项目那种 train / val / test 三列格式
+  split_csv:
+
+  # 可选的图像特征目录。
+  # 如果填写，会在 manifest 里额外记录 image_pt 和 image_exists。
+  image_dir:
+
+  # graph_dir 留空时，默认接上 build_text_hierarchy_graphs 的输出目录。
+  # graph_dir:
+
+  # manifest 输出目录。留空时默认写到 Output\manifests
+  # output_dir:
+  output_subdir: manifests
+
+  # manifest 输出文件名。留空时自动按模式命名：
+  # text_graph_manifest_masked.csv
+  output_name:

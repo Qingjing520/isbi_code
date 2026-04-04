@@ -1,0 +1,123 @@
+MULTI-MODAL DOMAIN ADAPTATION FOR CANCER DIAGNOSIS VIA INTEGRATION OF PATHOLOGICAL IMAGES AND CLINICAL TEXT DATA
+¡¡¡¡¡¡¡¡¡¡¡¡¡¡¡¡¡¡¡¡¡¡¡¡Binyu Zhang1	Kai Yang1	Wei Shao1,2,? 1 The College of Artificial Intelligence, Nanjing University of Aeronautics and Astronautics, Nanjing, China 2 Nanjing University of Aeronautics and Astronautics Shenzhen Research Institute, Shenzhen, China
+
+ABSTRACT
+Whole-slide pathological images (WSIs) have long been regarded as the gold standard for cancer diagnosis and treatment planning. Recent research shows that the integrative analysis of WSIs with their corresponding pathological reports can significantly enhance diagnostic accuracy, as it leverages complementary visual-textual cues. However, data from different centers often have notable distribution shifts that hinder model adaptation across different sites. To solve this problem, we propose M2DA-ICT (Multi-modal Domain Adaptation via Integration of Pathological Images and Clinical Texts), a new framework for enhancing cross-center cancer diagnosis. Specifically, for the pathological images, we introduce a graph-based topology alignment module, which represents each WSI as a patch-level graph and aligns domain distributions using Maximum Mean Discrepancy (MMD) on both node and topological features. For the clinical text data, we utilize embeddings derived from pretrained vision-language models to perform distribution alignment between source and target centers via MMD. Finally, a Mixture-of-Experts (MoE) module is adopted to combine the pathological image and text reports data to conduct cancer diagnosis . Extensive experiments on TCGA-BRCA and TCGA-KIRC datasets show M2DA-ICT consistently outperforms the existing multimodal domain adaptation baselines.
+¡¡¡¡Index Terms- Multi-modal Learning, Domain Adaptation, Computational Pathology, Cancer Diagnosis
+1. INTRODUCTION
+It is widely recognized that the whole-slide pathological images (WSIs) are regarded as the gold standard for cancer diagnosis since it can reflect the aggressiveness of human cancers. With the advent of digital pathology and deep learning, computational models are designed to uncover hidden patterns in tissue that can more effectively predict cancer aggressiveness and treatment response [1]. Besides the WSIs, recent studies also indicate that the pathological reports can provide human-curated semantic information that is complementary to the WSI for cancer diagnosis [2]. To combine
+
+*Corresponding author.WSI and clinical text information for clinical outcome prediction, Sun et al.[3] developed a deep neural network that integrates multiple data sources (e.g. clinical report features) alongside histopathology images for breast cancer prognosis. Yan et al.[4] proposed a fusion network that combines WSI with patient clinical attributes for cancer diagnosis. Both of these studies suggest the advantage of combining both image and text data for clinical outcome prediction.
+¡¡¡¡Recently, for the purpose of validating the generalization ability of the multi-modal cancer diagnosis models, a bunch of studies have begun collecting multi-center data for evaluation. However, data from different centers often have distribution shifts that hinder model adaptation across different sites [5]. To address it, a series of domain adaptation algorithms have been proposed. For example, the study in [6] presented a novel spectral alignment perspective for balancing inter-domain transferability and intra-domain discriminability, while the multi-modal approaches such as A3D2 [7] and SimMMDG [8] introduced selective alignment strategies to balance shared and modality-specific representations. However, these multi-modal domain adaption studies are applied on natural images that are not suitable for pathological images with more complex topological structure [9]. Furthermore, the existing studies for fusing pathological image and text data often rely on simple concatenation or fixed-weight combination, which lack the flexibility to adaptively emphasize modality interactions under varying domain conditions.
+
+Fig. 1: The framework of the proposed M2DA-ICT approach.¡¡¡¡Based on the above consideration, we propose M2DAICT (Multi-modal Domain Adaptation via Integration of Pathological Images and Clinical Text Data), a new multimodal domain adaption framework for cancer diagnosis (shown in Fig. 1). Specifically, we firstly construct a WSIlevel graph representation that leverages graph neural networks to preserve tissue topology and propose a graph-based topology alignment module to mitigate structure-level discrepancies across centers. Then, for the text data, we develop a textual feature alignment strategy based on the foundation CONCH model [10]. Finally, a Mixture-of-Experts (MoE) fusion module is developed to integrate heterogeneous visual and textual features for cancer diagnosis. The experimental results on two cancer cohorts derived from The Cancer Genome Atlas (TCGA) show the advantage of our method compared to existing studies.
+2. METHODS
+2.1. Dataset
+We conduct experiments on two cohorts derived from The Cancer Genome Atlas (TCGA), including Breast Invasive Carcinoma (BRCA) and Kidney Renal Clear Cell Carcinoma (KIRC). For each cancer cohort, the WSIs and their corresponding reports are collected from different centers, we show the number of patients and centers for each cohort in Table 1, and our goal is to discriminate early-stage patients (Stage I, Stage II) from the late-stage patients (Stage III, Stage IV) across different sites.
+2.2. Data Pre-processing
+Due to the extremely high resolution of WSIs(e.g., 100,000 ¡Á 100,000 pixels), we divide each slide into non-overlapping patches. Each patch is processed with the CONCH image encoder [10] to obtain a 512-dimensional representation. For the text data, we firstly exclude the diagnosis information and then segment it into sentences, where each sentence is en-
+BRCAKIRCNo. of Patients:830517No. of Sites3617Early Stage(Stage I, Stage II)627319Late Stage(Stage III, Stage IV)203198Table 1: Clinical statistics of BRCA and KIRC cohorts. coded by the CONCH text encoder to generate sentence-level embeddings with the dimension of 512.
+2.3. Image Alignment
+To mitigate the inter-center domain discrepancy across Whole Slide Images (WSIs), we propose an image alignment module operating on graph representations. Assume that the source domain contains Ns WSIs and the target domain contains Nt WSIs. For the p-th WSI, we denote its patch-level feature matrix as Ip ¡Ê Rnp¡Ád, where np denotes the number of nonoverlapping patches and d = 512 is the feature dimension extracted by a pre-trained encoder.
+¡¡¡¡To obtain a compact graph representation, we perform K-means clustering [11] on the np patch features to group them into m clusters. The centroid of each cluster forms a node, yielding the node feature matrix
+	Vp = [v1,v2,...,vm]? ¡Ê Rm¡Ád	(1)
+where vi ¡Ê Rd denotes the feature vector of the i-th node.We compute pairwise cosine similarities between nodes and connect each node to its top-k most similar neighbors, constructing the adjacency matrix Ep and forming a sparse graph Gp = (Vp,Ep) that preserves local semantic relationships.
+¡¡¡¡To further encode high-order structural characteristics, we define a topology descriptor matrix
+	Tp = [t1,t2,...,tm]? ¡Ê Rm¡Á3	(2)
+                             (1) (2) (3) where each vector tr = [tr ,tr ,tr ] records the number of 1-hop, 2-hop, and 3-hop neighbors of node r, respectively.
+¡¡¡¡To reduce cross-domain distributional discrepancies, we align both the node feature matrices and the topology descriptors of WSIs from the source and target domains using Maximum Mean Discrepancy (MMD) [12]. The alignment objectives are defined as:
+	Lnode = MMD 	(3)
+	Ltopology = MMD 	(4)
+where MMD(¡¤,¡¤) computes the distributional discrepancy between two feature sets and the superscripts "src" and "tgt" denote the source and target domains, respectively. By jointly optimizing these two losses, the model learns domain-invariant yet discriminative image representations.
+2.4. Text Alignment
+After obtaining sentence-level embeddings from the CONCH text encoder, we perform cross-domain alignment to reduce distributional gaps among pathological reports from different centers. Let the textual representations of the p-th report in the source and target domains be Rp ¡Ê Rnp¡Ád, where each row corresponds to a sentence embedding of dimension d = 512. We then compute the domain alignment loss as:
+	Ltxt = MMD 	(5)
+where the superscripts "src" and "tgt" denote the source and target domains, respectively.
+2.5. Mixture of Experts
+The architecture of our Mixture of Experts (MoE) module is illustrated in Fig. 2. Built upon the classical MoE framework [13], the proposed module aims to achieve adaptive fusion between image and text modalities. Before entering the MoE, both image and report features are processed by an attention pooling layer to obtain compact representations F1 and F2. The MoE module then performs dynamic expert selection and multimodal fusion through a gating mechanism and multiple attention-based experts.
+¡¡¡¡The gating network is designed to be lightweight yet effective for expert selection. It consists of linear layers, Gaussian Error Linear Units (GELUs), and Root Mean Square Normalization (RMSNorm) layers, which project features into a shared latent space. The gating function is defined as:
+logits = W ¡¤ mean(GELU(RMSNorm
++ W ¡¤ mean(GELU(RMSNorm
+where W1, W2, and W are trainable parameters. The resulting logits determine which expert is activated for each input, and only one expert is selected to maintain computational efficiency.
+¡¡¡¡For adaptive fusion, the MoE incorporates three experts {EX1,EX2,EX3}, each implementing a distinct attentionbased strategy: concatenation self-attention, additive selfattention, and cross-attention. Formally, the operations of
+
+Fig. 2: The proposed Mixture of Experts (MoE) module consists of a gating network and three attention-based experts for adaptive multimodal fusion.
+these experts are defined as:
+		(7)
+where SA(¡¤) and CA(¡¤) denote self-attention and crossattention operations, respectively.
+2.6. Objective function of M2DA-ICT
+Given the fused representation F, the final prediction y? is obtained through a fully connected classifier followed by a softmax function. The classification objective is defined by the cross-entropy loss:
+		(8)
+where N is the batch size, C denotes the number of categories, yi,c is the ground-truth one-hot label, and y?i,c is the predicted probability for class c of sample i. In summary, the objective function of our M2DA-ICT can be denoted as:
+¡¡¡¡¡¡Ltotal = Lcls + ¦ÁLtxt + ¦ÂLnode + ¦ÃLtopology (9) where Lcls denotes the category classification loss based on cross-entropy, Ltxt is the text-level alignment loss, Lnode is the graph node-level alignment loss, and Ltopology represents the graph topology-level alignment loss. ¦Á, ¦Â and ¦Ã are weights to balance these three losses. Specifically, We fix ¦Á = 0.5, ¦Â = 0.1, ¦Ã = 0.1.
+3. EXPERIMENTS
+3.1. Implementation Details
+We test the proposed M2DA-ICT framework on two cancer cohorts (i.e., BRCA and KIRC) for the purpose of classifying Table 2: Comparison on TCGA-BRCA and TCGA-KIRC with recent uni-modal and multi-modal domain-adaptive methods. The symbol "*" indicates that our method is significantly superior to the comparing methods.
+MethodsTCGA-BRCATCGA-KIRCACCAUCACCAUCCLAM0.705¡À0.036*0.704¡À0.027*0.697¡À0.019*0.705¡À0.020*SDAT0.697¡À0.035*0.630¡À0.041*0.686¡À0.017*0.696¡À0.033*SPA0.708¡À0.007*0.608¡À0.019*0.707¡À0.037*0.704¡À0.021*DALN0.688¡À0.072*0.691¡À0.053*0.697¡À0.014*0.707¡À0.013*A3D20.734¡À0.046*0.754¡À0.042*0.755¡À0.015*0.754¡À0.028*Colearn-plus0.731¡À0.063*0.641¡À0.050*0.756¡À0.038*0.736¡À0.023*SimMMDG0.711¡À0.076*0.653¡À0.049*0.743¡À0.052*0.728¡À0.063*UMFC0.728¡À0.022*0.713¡À0.019*0.753¡À0.037*0.754¡À0.011*	Proposed	0.765¡À0.047	0.784¡À0.053	0.788¡À0.047	0.776¡À0.025
+early-stage cancer patients from late-stage cancer patients. For each cohort, the five-fold cross-validation is adopted, where we equally divide all the sites into five folds and then select the patients in four folds as source domain patients, while the patients in the remaining fold as target domain for testing. We use the measurements of ACC and AUC for performance evaluation. For each WSI, the CLAM framework [1] is used to extract non-overlapping 224¡Á224 patches under 10¡Á magnification. The CONCH model [14] is applied to generate embeddings for both image patches and pathological reports with the dimension of 512. For parameters settings, we fix the cluster number m introduced in Section 2.3 as 64 and the neighbor number k for graph construction is set as 32. The model is optimized using AdamW with a learning rate of 1 ¡Á 10?4 and trained for up to 20 epochs.
+3.2. Comparisons with the Existing Multi-modal Domain Adaptation Models.
+We conduct extensive comparisons with recent multi-modal domain-adaptive methods including CLAM [1], DALN [15], SPA [6], SDAT [16], A3D2 [7], Colearn-plus [17], SimMMDG [8], UMFC [18] and L2C [19]. As can be seen from Table 2, our method consistently surpasses the baselines across different datasets. The reason lies in the following two aspects: Firstly, we align the pathological images across different sites by combining morphology and topology information derived from WSIs which can more effectively mitigate the impact of inter-site heterogeneity on WSIs. Secondly, we apply MoE to combine image and text data that can achieve fine-grained and effective multi-modal fusion results for cancer diagnosis.
+3.3. Ablation Studies
+Effects of different components in Eq.(9): Table 3a shows the ablation study results on TCGA-BRCA cohort when removing different components in Eq.(9). It is obvious that the proposed M2DA-ICT (shown in the last row of Table 3a can better predict cancer stage than all its competitors, indicating that each component contributes positively to the final prediction results.
+Effects of different MoE experts: To assess the contribution of each individual expert in the MoE module, we conduct a leave-one-out ablation study by iteratively removing each expert and then evaluating the cancer diagnosis performance. As shown in Table 3b, the removal of any single expert will lead to a decline in cancer diagnosis across different domains. Such results indicate the advantage of using all of our designed experts for cancer diagnosis.
+Table 3: Ablation study of M2DA-ICT on TCGA-BRCA cohort.
+(a) Ablation study for different components in Eq.(9).
+LnodeLtopologyLtxtACCAUC?
+?
+?
+??
+?
+?
+??
+?
+?
+?0.739¡À0.026 0.722¡À0.044
+0.715¡À0.032
+0.765¡À0.0470.775¡À0.010 0.737¡À0.016
+0.697¡À0.031
+0.784¡À0.053(b) Ablation study for different experts in MoE module.
+Expert1Expert2Expert3ACCAUC?
+?
+?
+??
+?
+?
+??
+?
+?
+?0.738¡À0.030 0.726¡À0.031
+0.738¡À0.024
+0.765¡À0.0470.773¡À0.025 0.715¡À0.016
+0.781¡À0.018
+0.784¡À0.0533.4. Visualization Results
+To enhance interpretability, we visualize the learned representations of M2DA-ICT using t-SNE [20]. Fig. 3 presents the distributions of fused features obtained with and without the proposed alignment strategy, where DT (direct transfer) indicates the model trained without domain alignment. As can be seen from Fig.3, our method effectively aligns cross-domain distributions in the latent space.
+
+	(a) DT	(b) M2DA-ICT
+Fig. 3: Feature visualization results on BRCA dataset. Blue and red points denote the source and target features, respectively.
+4. CONCLUSION
+In this study, we present M2DA-ICT, a novel transfer learning framework that successfully achieves cross-center domain adaptation by integrating and aligning pathological images and clinical reports. Extensive experiments on TCGA-BRCA and TCGA-KIRC datasets show M2DA-ICT consistently outperforms the existing multi-modal domain adaptation baselines which demonstrates its strong potential in building reliable and generalizable AI diagnostic tools for real-world clinical settings.
+5. ACKNOWLEDGMENTS
+This work was supported by the National Key R&D Program of China (Grant No.2023YFF1204803) and the Shenzhen Science and Technology Program under Grant JCYJ20220530172403008)
+6. REFERENCES
+[1] M.Y. Lu, D.F.K. Williamson, T.Y. Chen, et al., "Dataefficient and weakly supervised computational pathology on whole-slide images," Nature Biomedical Engineering, vol. 5, pp. 555-570, 2021.
+[2] Y. Song, M. Roy, et al., "Multimodal data fusion for whole-slide histopathology image classification," Journal of Healthcare Informatics Research, 2025.
+[3] D. Sun, M. Wang, et al., "A multimodal deep neural network for human breast cancer prognosis prediction by integrating multi-dimensional data," IEEE/ACM transactions on computational biology and bioinformatics, vol. 16, no. 3, pp. 841-850, 2018.
+[4] R. Yan, F. Zhang, et al., "Richer fusion network for breast cancer classification based on multimodal data," BMC Medical Informatics and Decision Making, vol. 21, no. Suppl 1, pp. 134, 2021.
+[5] M. Asadi-Aghbolaghi, A. Darbandsari, et al., "Learning generalizable ai models for multi-center histopathology image classification," npj Precision Oncology, vol. 8, pp. Article 151, 2024.
+[6] Zhiqing Xiao, Haobo Wang, Ying Jin, Lei Feng, Gang Chen, Fei Huang, and Junbo Zhao, "Spa: A graph spectral alignment perspective for domain adaptation," Advances in Neural Information Processing Systems, vol. 36, pp. 37252-37272, 2023.
+[7] J. Sun, X. Zhang, et al., "Adversarial alignment with anchor dragging drift (a3d2): Multimodal domain adaptation with partially shifted modalities," in Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), 2025, pp. 19680-19690.
+[8] H. Dong, I. Nejjar, et al., "SimMMDG: A simple and effective framework for multi-modal domain generalization," Advances in Neural Information Processing Systems, pp. 78674 - 78695, 2023.
+[9] Wei Shao, YangYang Shi, Daoqiang Zhang, JunJie Zhou, and Peng Wan, "Tumor micro-environment interactions guided graph learning for survival analysis of human cancers from whole-slide pathological images,"
+in Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, 2024, pp. 11694- 11703.
+[10] Ming Y Lu, Bowen Chen, Drew FK Williamson,
+Richard J Chen, Ivy Liang, Tong Ding, Guillaume Jaume, Igor Odintsov, Long Phi Le, Georg Gerber, et al., "A visual-language foundation model for computational pathology," Nature medicine, vol. 30, no. 3, pp. 863- 874, 2024.
+[11] K. P. Sinaga and M.-S. Yang, "Unsupervised k-means clustering algorithm," IEEE Access, vol. 8, pp. 80716- 80727, 2020.
+[12] A. Gretton, K. M. Borgwardt, et al., "A kernel twosample test," Journal of Machine Learning Research, vol. 13, no. 1, pp. 723-773, 2012.
+[13] W. Fedus, B. Zoph, and N. Shazeer, "Switch transformers: Scaling to trillion parameter models with simple and efficient sparsity," Journal of Machine Learning Research, vol. 23, no. 120, pp. 1-39, 2022.
+[14] M. Y. Lu, B. Chen, et al., "A visual-language foundation model for computational pathology," Nature Medicine, vol. 30, pp. 863-874, 2024.
+[15] L. Chen, H. Chen, et al., "Reusing the task-specific classifier as a discriminator: Discriminator-free adversarial domain adaptation," in Proceedings of the IEEE/CVF conference on computer vision and pattern recognition, 2022, pp. 7181-7190.
+[16] H. Rangwani, S. K Aithal, et al., "A closer look at smoothness in domain adversarial training," in International conference on machine learning. PMLR, 2022, pp. 18378-18399.
+[17] W. Zhang, L. Shen, and C.S. Foo, "Source-free domain adaptation guided by vision and vision-language pre-training," International Journal of Computer Vision, vol. 133, no. 2, pp. 844-866, 2025.
+[18] J. Liang, R. Hou, et al., "Umfc: Unsupervised multidomain feature calibration for vision-language models," Advances in Neural Information Processing Systems, vol. 37, pp. 114072-114093, 2024.
+[19] Z. Chi, L. Gu, et al., "Learning to adapt frozen clip for few-shot test-time domain adaptation," in The Thirteenth International Conference on Learning Representations, 2025.
+[20] Laurens van der Maaten and Geoffrey Hinton, "Visualizing data using t-sne," Journal of machine learning research, vol. 9, no. Nov, pp. 2579-2605, 2008.
