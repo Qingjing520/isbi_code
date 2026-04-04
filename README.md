@@ -1,70 +1,206 @@
-我把这个项目整体读完了。它本质上是一个面向病理分期二分类的多模态训练工程：输入是图像 patch 特征 `.pt` 和文本特征 `.pt`，先做共享映射，再分别池化，之后用 3 个专家组成的 MoE 做融合，最后输出二分类结果；训练时还额外做源域/目标域的分布对齐。
+# ISBI Codebase
 
+这是当前的主项目仓库，包含两条互相关联的工作线：
 
+1. 多模态病理分期分类训练代码  
+2. 病理报告文本预处理与层次图构建流程
 
-\*\*项目结构\*\*
+当前目标是支持在 TCGA-BRCA、TCGA-KIRC、TCGA-LUSC 上进行病理分期二分类实验，并在文本侧同时兼容：
 
-核心入口在 \[main.py](D:\\Tasks\\isbi\_code\\main.py#L28)，负责 `train/test` 两种模式。真正的训练逻辑在 \[train.py](D:\\Tasks\\isbi\_code\\train.py#L158)，配置解析在 \[configs/config.py](D:\\Tasks\\isbi\_code\\configs\\config.py)，当前配置文件是 \[configs/config.yaml](D:\\Tasks\\isbi\_code\\configs\\config.yaml)。数据读取在 \[datasets/feature\_dataset.py](D:\\Tasks\\isbi\_code\\datasets\\feature\_dataset.py#L8)，模型拆成 4 个文件：\[models/mapper.py](D:\\Tasks\\isbi\_code\\models\\mapper.py)、\[models/pooling.py](D:\\Tasks\\isbi\_code\\models\\pooling.py)、\[models/fusion.py](D:\\Tasks\\isbi\_code\\models\\fusion.py)、\[models/classifier.py](D:\\Tasks\\isbi\_code\\models\\classifier.py)。对齐损失在 \[losses/mmd\_loss.py](D:\\Tasks\\isbi\_code\\losses\\mmd\_loss.py)，图结构构造在 \[utils/graph\_utils.py](D:\\Tasks\\isbi\_code\\utils\\graph\_utils.py)。另外有两个辅助脚本：\[tools/make\_splits.py](D:\\Tasks\\isbi\_code\\tools\\make\_splits.py) 用来生成多个随机切分，\[auto\_train\_next.py](D:\\Tasks\\isbi\_code\\auto\_train\_next.py) 用来自动切到下一个 `split\_k.csv` 并继续训练。
+- 论文原始句子级文本特征
+- 当前新增的 `Document -> Section -> Sentence` 层次图文本特征
 
+## 1. 项目结构
 
+主要目录如下：
 
-\*\*训练流程\*\*
+- [configs](D:\Tasks\isbi_code\configs)：训练配置与配置解析
+- [datasets](D:\Tasks\isbi_code\datasets)：数据集读取逻辑
+- [models](D:\Tasks\isbi_code\models)：映射、池化、融合、分类头
+- [losses](D:\Tasks\isbi_code\losses)：MMD 等损失
+- [utils](D:\Tasks\isbi_code\utils)：图构建、指标、随机种子等工具
+- [tools](D:\Tasks\isbi_code\tools)：辅助脚本
+- [diagrams](D:\Tasks\isbi_code\diagrams)：模型流程图
+- [pathology_report_extraction](D:\Tasks\isbi_code\pathology_report_extraction)：病理报告文本处理全流程
+- [main.py](D:\Tasks\isbi_code\main.py)：训练/测试入口
+- [train.py](D:\Tasks\isbi_code\train.py)：核心训练逻辑
 
-数据集类会从 `split\_x.csv` 里读取 `train/test` 列，把每个 `slide\_id` 映射到图像特征 `<slide\_id>.pt` 和文本特征 `<case\_id>.pt`，标签来自 `label\_csv` 里的 `case\_id + slide\_id + label` 三列，见 \[datasets/feature\_dataset.py](D:\\Tasks\\isbi\_code\\datasets\\feature\_dataset.py#L22)。训练时：
+## 2. 当前训练输入
 
-1\. 图像和文本序列都先过同一个 `SharedMapper`。
+当前训练代码支持两种文本输入模式。
 
-2\. 两路序列分别做 attention pooling，得到图像向量和文本向量。
+### `sentence_pt`
 
-3\. `MoEFusion` 在三种融合专家之间做路由：
+论文原始方式。  
+`text_dir` 中每个文件通常是一个 `case_id.pt`，张量形状一般为：
 
-&#x20;  - 拼接后自注意力
+```text
+(句子数, 512)
+```
 
-&#x20;  - 相加后自注意力
+典型目录：
 
-&#x20;  - 双向 cross-attention
+- `D:\Tasks\text_extract_features\BRCA_text`
+- `D:\Tasks\text_extract_features\KIRC_text`
+- `D:\Tasks\text_extract_features\LUSC_text`
 
-4\. 分类损失只用源域训练集标签。
+### `hierarchy_graph`
 
-5\. 从 warmup 之后开始加入 3 个 MMD 对齐项：
+当前新增方式。  
+`text_dir` 中每个文件是一个层次图 `.pt`，内部是字典，包含：
 
-&#x20;  - 文本均值特征对齐
+- `node_features`
+- `sentence_features`
+- `section_features`
+- `document_feature`
+- `edge_index`
+- `edge_type`
+- `node_type`
 
-&#x20;  - 图像节点特征对齐
+典型目录：
 
-&#x20;  - 图拓扑统计对齐
+- [BRCA text hierarchy graphs](D:\Tasks\isbi_code\pathology_report_extraction\Output\text_hierarchy_graphs_masked\BRCA)
+- [KIRC text hierarchy graphs](D:\Tasks\isbi_code\pathology_report_extraction\Output\text_hierarchy_graphs_masked\KIRC)
 
+说明：
 
+- 当前训练代码已经可以读取这些层次图 `.pt`
+- 但目前主要是把选定的特征张量当作文本输入序列使用
+- 还没有显式利用 `edge_index / edge_type` 做真正的图神经网络学习
 
-这个思路都集中在 \[train.py](D:\\Tasks\\isbi\_code\\train.py#L249) 到 \[train.py](D:\\Tasks\\isbi\_code\\train.py#L340)。图像图结构的做法是：先对 patch 特征做 K-means 得到固定数量节点，再按余弦相似度构图，再统计 1/2/3-hop 邻居数作为拓扑特征，见 \[utils/graph\_utils.py](D:\\Tasks\\isbi\_code\\utils\\graph\_utils.py)。
+## 3. 标签与划分
 
+当前正式训练标签统一采用与 LUSC 一致的格式：
 
+```csv
+case_id,slide_id,label
+```
 
-\*\*当前状态\*\*
+可直接用于训练的标签文件：
 
-当前配置指向 `split\_146`，数据路径是外部绝对路径，见 \[configs/config.yaml](D:\\Tasks\\isbi\_code\\configs\\config.yaml)。项目里已经有 147 个实验目录 `experiments/split\_0` 到 `experiments/split\_146`。最近这个 split 的日志显示前 3 轮是纯分类 warmup，第 4 轮开始加对齐损失；目前我看到的日志前几轮里，`epoch 4` 的目标域 `AUC` 到了约 `0.6737`，日志在 \[experiments/split\_146/log.jsonl](D:\\Tasks\\isbi\_code\\experiments\\split\_146\\log.jsonl)。
+- [BRCA_pathologic_stage.csv](D:\Tasks\Pathologic_Stage_Label\BRCA_pathologic_stage.csv)
+- [KIRC_pathologic_stage.csv](D:\Tasks\Pathologic_Stage_Label\KIRC_pathologic_stage.csv)
+- [LUSC_pathologic_stage.csv](D:\Tasks\Pathologic_Stage_Label\LUSC_pathologic_stage.csv)
 
+150 组 train/test 划分已生成在：
 
+- [Split_Table\BRCA](D:\Tasks\Split_Table\BRCA)
+- [Split_Table\KIRC](D:\Tasks\Split_Table\KIRC)
+- [Split_Table\LUSC](D:\Tasks\Split_Table\LUSC)
 
-\*\*几个值得注意的点\*\*
+每组划分只有两列：
 
-\[train.py](D:\\Tasks\\isbi\_code\\train.py#L359) 直接在 `target\_loader` 上做每轮评估、早停和最佳模型选择，这从研究角度看相当于把测试集当验证集用了，会有信息泄漏风险。  
+```csv
+idx,train,test
+```
 
-\[datasets/feature\_dataset.py](D:\\Tasks\\isbi\_code\\datasets\\feature\_dataset.py#L18) 虽然保留了 `val` 模式，但当前 dataloader 已经把 `val` 整段注释掉了。  
+## 4. 配置方式
 
-\[configs/config.yaml](D:\\Tasks\\isbi\_code\\configs\\config.yaml) 里 `output.save\_best\_by: val\_avg`，但训练代码里其实没有用这个字段，实际始终按 `target auc/acc` 选 best。  
+训练只需要修改一个 yaml：
 
-\[main.py](D:\\Tasks\\isbi\_code\\main.py#L22) 默认 checkpoint 路径写的是 `experiments/split0/best\_model.pt`，而目录命名实际是 `split\_0`，默认值有小 bug。  
+- [config.yaml](D:\Tasks\isbi_code\configs\config.yaml)
 
-代码里有一些中文注释和打印出现乱码，像 \[train.py](D:\\Tasks\\isbi\_code\\train.py#L382) 和 \[auto\_train\_next.py](D:\\Tasks\\isbi\_code\\auto\_train\_next.py)，大概率是文件编码不一致。  
+常改字段主要是：
 
-\[utils/seed.py](D:\\Tasks\\isbi\_code\\utils\\seed.py) 和 \[train.py](D:\\Tasks\\isbi\_code\\train.py#L22) 各有一份 `set\_seed`，目前是重复实现，训练里也没复用 `utils` 版本。
+- `data.split_file`
+- `data.label_file`
+- `data.image_dir`
+- `data.text_dir`
+- `data.text_mode`
+- `data.text_graph_feature`
+- `output.exp_dir`
 
+其中：
 
+- `text_mode: sentence_pt` 表示使用论文原始句子文本
+- `text_mode: hierarchy_graph` 表示使用当前层次图文本
 
-如果你愿意，我下一步可以继续帮你做两件事之一：  
+当 `text_mode: hierarchy_graph` 时，可进一步切换：
 
-1\. 画一张“从输入到 loss 的模型流程图”。  
+- `node_features`
+- `sentence_features`
+- `section_features`
+- `document_feature`
 
-2\. 基于这次阅读，给你出一份“项目重构/改进清单”。
+## 5. 训练命令
 
+默认训练：
+
+```powershell
+D:\ProgrammeFiles\Anaconda\envs\Pytorch\python.exe D:\Tasks\isbi_code\main.py --config D:\Tasks\isbi_code\configs\config.yaml --mode train
+```
+
+仅测试已有 checkpoint：
+
+```powershell
+D:\ProgrammeFiles\Anaconda\envs\Pytorch\python.exe D:\Tasks\isbi_code\main.py --config D:\Tasks\isbi_code\configs\config.yaml --mode test --ckpt D:\Tasks\isbi_code\experiments\your_exp\best_model.pt
+```
+
+## 6. 病理报告文本流程
+
+病理报告相关流程都在：
+
+- [pathology_report_extraction](D:\Tasks\isbi_code\pathology_report_extraction)
+
+这条线当前已经完成到：
+
+```text
+PDF -> 文本清洗 -> section/sentence 切分 -> masked 过滤
+-> CONCH 句子特征 -> Document/Section/Sentence 三层层次图
+```
+
+推荐查看：
+
+- [pathology_report_extraction\README.md](D:\Tasks\isbi_code\pathology_report_extraction\README.md)
+- [pathology_report_extraction\workflow_overview.md](D:\Tasks\isbi_code\pathology_report_extraction\workflow_overview.md)
+- [pathology_report_extraction\cmd.txt](D:\Tasks\isbi_code\pathology_report_extraction\cmd.txt)
+
+## 7. 当前建议
+
+如果你现在要继续做实验，推荐顺序是：
+
+1. 在 [configs\config.yaml](D:\Tasks\isbi_code\configs\config.yaml) 中选择数据集、文本模式和特征类型
+2. 指向对应的 `split_file` 和 `label_file`
+3. 准备好对应数据集的 WSI `.pt` 特征目录
+4. 先跑 baseline
+5. 再继续做文本层次图相关消融
+
+当前比较值得比较的文本设置：
+
+- `sentence_pt`
+- `hierarchy_graph + section_features`
+- `hierarchy_graph + node_features`
+
+## 8. 版本管理
+
+本仓库已经接入 GitHub：
+
+- [Qingjing520/isbi_code](https://github.com/Qingjing520/isbi_code)
+
+日常更新命令：
+
+```powershell
+cd /d D:\Tasks\isbi_code
+git status
+git add .
+git commit -m "说明这次修改内容"
+git push
+```
+
+已忽略本地环境和大体积输出，例如：
+
+- `.idea/`
+- `.venv_pathology/`
+- `experiments/`
+- [pathology_report_extraction\Output](D:\Tasks\isbi_code\pathology_report_extraction\Output)
+
+## 9. 备注
+
+当前代码已经兼容“句子文本特征”和“层次图文本特征”两种输入。  
+如果后续要真正发挥层次图优势，下一步应考虑让训练代码显式使用：
+
+- `edge_index`
+- `edge_type`
+- `node_type`
+
+也就是从“层次化特征输入”进一步推进到“真正的图结构学习”。
