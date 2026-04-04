@@ -379,7 +379,7 @@ def train_one_split(cfg):
                 },
                 best_path,
             )
-            print(f"[✓] save best @ epoch={epoch:03d}, score={best_metric:.4f}")
+            print(f"[best] save best @ epoch={epoch:03d}, score={best_metric:.4f}")
 
         stop = stopper.step(score)
 
