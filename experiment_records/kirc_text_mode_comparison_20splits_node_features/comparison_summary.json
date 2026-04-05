@@ -1,0 +1,21 @@
+{
+  "dataset": "KIRC",
+  "num_splits": 20,
+  "hierarchy_feature": "node_features",
+  "modes": {
+    "sentence_pt": {
+      "runs": 20,
+      "acc_mean": 0.7823741048574447,
+      "acc_std": 0.04464674420484945,
+      "auc_mean": 0.8657634927599824,
+      "auc_std": 0.020942605697558198
+    },
+    "hierarchy_graph": {
+      "runs": 20,
+      "acc_mean": 0.7467625916004181,
+      "acc_std": 0.05682039073877358,
+      "auc_mean": 0.8374286967968407,
+      "auc_std": 0.034583622218879145
+    }
+  }
+}

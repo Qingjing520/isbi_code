@@ -1,0 +1,21 @@
+{
+  "dataset": "BRCA",
+  "num_splits": 5,
+  "hierarchy_feature": "node_features",
+  "modes": {
+    "sentence_pt": {
+      "runs": 5,
+      "acc_mean": 0.7385365962982178,
+      "acc_std": 0.03803627256035043,
+      "auc_mean": 0.7443736730360935,
+      "auc_std": 0.02123693698290175
+    },
+    "hierarchy_graph": {
+      "runs": 5,
+      "acc_mean": 0.7541463375091553,
+      "acc_std": 0.01745222122941807,
+      "auc_mean": 0.7295912951167728,
+      "auc_std": 0.049833316384103585
+    }
+  }
+}

@@ -7,6 +7,8 @@ import json
 import math
 import os
 import statistics
+import time
+from datetime import datetime
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -28,6 +30,21 @@ DEFAULT_HIERARCHY_TEXT_DIR = (
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "experiments" / "brca_text_mode_comparison_5splits"
 
 
+def _ts() -> str:
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _format_seconds(seconds: float) -> str:
+    total = int(round(float(seconds)))
+    hours, rem = divmod(total, 3600)
+    minutes, secs = divmod(rem, 60)
+    if hours > 0:
+        return f"{hours}h {minutes}m {secs}s"
+    if minutes > 0:
+        return f"{minutes}m {secs}s"
+    return f"{secs}s"
+
+
 def parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser(
         description="Compare BRCA sentence_pt vs hierarchy_graph text modes across multiple splits."
@@ -43,6 +60,12 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--split_offset", type=int, default=0)
     ap.add_argument("--hierarchy_feature", type=str, default="section_features")
     ap.add_argument(
+        "--dataset_name",
+        type=str,
+        default="",
+        help="Dataset name shown in logs and summaries. If empty, infer from the provided paths.",
+    )
+    ap.add_argument(
         "--train_num_workers",
         type=int,
         default=0,
@@ -50,6 +73,24 @@ def parse_args() -> argparse.Namespace:
     )
     ap.add_argument("--skip_existing", action="store_true")
     return ap.parse_args()
+
+
+def _infer_dataset_name(args: argparse.Namespace) -> str:
+    if str(args.dataset_name).strip():
+        return str(args.dataset_name).strip().upper()
+
+    candidates = [
+        os.path.basename(os.path.normpath(args.split_dir)),
+        os.path.basename(os.path.normpath(args.sentence_text_dir)),
+        os.path.basename(os.path.normpath(args.hierarchy_text_dir)),
+        os.path.basename(args.label_file),
+    ]
+    for item in candidates:
+        upper = str(item).upper()
+        for key in ("BRCA", "KIRC", "LUSC"):
+            if key in upper:
+                return key
+    return "UNKNOWN"
 
 
 def _dataset_size(
@@ -149,13 +190,19 @@ def _train_or_resume(cfg: Any, skip_existing: bool) -> dict[str, float]:
     return {"acc": float(metrics["acc"]), "auc": float(metrics["auc"])}
 
 
-def _write_aggregate(output_dir: str, split_count: int, hierarchy_feature: str, records: list[dict[str, Any]]) -> dict[str, Any]:
+def _write_aggregate(
+    output_dir: str,
+    dataset_name: str,
+    split_count: int,
+    hierarchy_feature: str,
+    records: list[dict[str, Any]],
+) -> dict[str, Any]:
     grouped: dict[str, list[dict[str, Any]]] = {}
     for row in records:
         grouped.setdefault(row["mode"], []).append(row)
 
     aggregate = {
-        "dataset": "BRCA",
+        "dataset": dataset_name,
         "num_splits": split_count,
         "hierarchy_feature": hierarchy_feature,
         "modes": {},
@@ -200,13 +247,15 @@ def main() -> None:
     args = parse_args()
     os.makedirs(args.output_dir, exist_ok=True)
     base_cfg = get_config(args.config)
+    dataset_name = _infer_dataset_name(args)
+    all_start_time = time.perf_counter()
 
     split_indices = list(range(args.split_offset, args.split_offset + args.num_splits))
     modes = ["sentence_pt", "hierarchy_graph"]
     records: list[dict[str, Any]] = []
 
     plan = {
-        "dataset": "BRCA",
+        "dataset": dataset_name,
         "split_indices": split_indices,
         "sentence_text_dir": os.path.abspath(args.sentence_text_dir),
         "hierarchy_text_dir": os.path.abspath(args.hierarchy_text_dir),
@@ -219,6 +268,12 @@ def main() -> None:
         json.dump(plan, f, indent=2)
 
     for split_idx in split_indices:
+        split_start_time = time.perf_counter()
+        print("")
+        print("=" * 100)
+        print(f"[{_ts()}] [{dataset_name} compare] START split={split_idx:03d}")
+        print("=" * 100)
+        print("")
         for mode_name in modes:
             cfg = _mode_cfg(base_cfg, args, split_idx, mode_name)
             train_size = _dataset_size(
@@ -240,11 +295,18 @@ def main() -> None:
                 mode="test",
             )
 
+            print("-" * 100)
             print(
-                f"[BRCA compare] split={split_idx:03d} mode={mode_name} "
-                f"train={train_size} test={test_size}",
+                f"[{_ts()}] [{dataset_name} compare] split={split_idx:03d} | mode={mode_name} | "
+                f"train={train_size} | test={test_size}",
                 flush=True,
             )
+            if mode_name == "hierarchy_graph":
+                print(
+                    f"[{_ts()}] [{dataset_name} compare] hierarchy_feature={cfg.data.text_graph_feature}",
+                    flush=True,
+                )
+            print("-" * 100)
             metrics = _train_or_resume(cfg, skip_existing=args.skip_existing)
             record = {
                 "split_idx": split_idx,
@@ -263,7 +325,8 @@ def main() -> None:
                 f"split={split_idx:03d}, mode={mode_name}, acc={record['acc']:.4f}, "
                 f"auc={record['auc']:.4f}"
             )
-            print(f"[BRCA compare] {summary_line}", flush=True)
+            print(f"[{_ts()}] [{dataset_name} compare] {summary_line}", flush=True)
+            print("")
 
             with open(
                 os.path.join(args.output_dir, "comparison_results.jsonl"),
@@ -273,12 +336,38 @@ def main() -> None:
                 f.write(json.dumps(record) + "\n")
 
             _write_results_csv(args.output_dir, records)
-            _write_aggregate(args.output_dir, len(split_indices), args.hierarchy_feature, records)
+            _write_aggregate(
+                args.output_dir,
+                dataset_name,
+                len(split_indices),
+                args.hierarchy_feature,
+                records,
+            )
+        split_duration = time.perf_counter() - split_start_time
+        print(
+            f"[{_ts()}] [{dataset_name} compare] END split={split_idx:03d} | "
+            f"duration={_format_seconds(split_duration)}",
+            flush=True,
+        )
+        if split_idx != split_indices[-1]:
+            print("")
+            print("")
+            print("")
     _write_results_csv(args.output_dir, records)
 
-    aggregate = _write_aggregate(args.output_dir, len(split_indices), args.hierarchy_feature, records)
+    aggregate = _write_aggregate(
+        args.output_dir,
+        dataset_name,
+        len(split_indices),
+        args.hierarchy_feature,
+        records,
+    )
+    total_duration = time.perf_counter() - all_start_time
 
-    print("\n[BRCA compare] Done.", flush=True)
+    print(
+        f"\n[{_ts()}] [{dataset_name} compare] Done. total_duration={_format_seconds(total_duration)}",
+        flush=True,
+    )
     print(json.dumps(aggregate, indent=2), flush=True)
 
 

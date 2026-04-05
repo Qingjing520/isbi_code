@@ -2,6 +2,7 @@ from __future__ import annotations
 import os
 import json
 import random
+from datetime import datetime
 from dataclasses import asdict
 from typing import List, Tuple
 
@@ -101,6 +102,10 @@ def _linear_decay_factor(epoch: int, total_epochs: int, to: float) -> float:
         return float(to)
     t = epoch / float(total_epochs - 1)
     return float((1.0 - t) * 1.0 + t * to)
+
+
+def _ts() -> str:
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
 @torch.no_grad()
@@ -379,7 +384,7 @@ def train_one_split(cfg):
                 },
                 best_path,
             )
-            print(f"[best] save best @ epoch={epoch:03d}, score={best_metric:.4f}")
+            print(f"[{_ts()}] [best] save best @ epoch={epoch:03d}, score={best_metric:.4f}")
 
         stop = stopper.step(score)
 
@@ -404,15 +409,16 @@ def train_one_split(cfg):
             mode_str = f"align(decay={decay_factor:.3f})"
 
         print(
-            f"[Epoch {epoch:03d}] {mode_str} "
+            f"[{_ts()}] [Epoch {epoch:03d}] {mode_str} "
             f"train(loss={running['loss_total']:.4f}, cls={running['loss_cls']:.4f}, "
             f"txt={running['loss_txt']:.4f}, node={running['loss_node']:.4f}, topo={running['loss_topo']:.4f}) | "
             f"tgt(acc={tgt_metrics['acc']:.4f}, auc={tgt_metrics['auc']:.4f}) | "
             f"best={best_metric:.4f}"
         )
+        print("")
 
         if stop:
-            print(f"[EarlyStop] stop at epoch={epoch:03d} (best={best_metric:.4f})")
+            print(f"[{_ts()}] [EarlyStop] stop at epoch={epoch:03d} (best={best_metric:.4f})")
             break
 
     return best_path
