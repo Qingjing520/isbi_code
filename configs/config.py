@@ -16,6 +16,9 @@ class DataConfig:
     text_dir: str
     text_mode: str = "sentence_pt"
     text_graph_feature: str = "node_features"
+    text_use_graph_structure: bool = False
+    sentence_text_dir: str = ""
+    graph_text_dir: str = ""
 
 
 @dataclass
@@ -46,6 +49,15 @@ class ModelConfig:
 
     classifier_hidden: int = 256
     classifier_dropout: float = 0.20
+
+    text_graph_layers: int = 1
+    text_graph_dropout: float = 0.05
+    text_graph_use_next_edges: bool = True
+    sentence_local_layers: int = 1
+    sentence_local_heads: int = 8
+    hier_readout_hidden: int = 256
+    hier_readout_dropout: float = 0.10
+    text_dual_fusion_dropout: float = 0.10
 
 
 @dataclass
@@ -99,6 +111,8 @@ def _require_yaml():
 
 
 def _expand(p: str) -> str:
+    if p is None or str(p).strip() == "":
+        return ""
     return os.path.abspath(os.path.expanduser(p))
 
 
@@ -123,6 +137,9 @@ def get_config(path: str) -> Config:
             text_dir=_expand(data["text_dir"]),
             text_mode=str(data.get("text_mode", "sentence_pt")),
             text_graph_feature=str(data.get("text_graph_feature", "node_features")),
+            text_use_graph_structure=bool(data.get("text_use_graph_structure", False)),
+            sentence_text_dir=_expand(data.get("sentence_text_dir", data.get("text_dir", ""))),
+            graph_text_dir=_expand(data.get("graph_text_dir", data.get("text_dir", ""))),
         ),
         graph=GraphConfig(
             num_nodes_m=int(graph.get("num_nodes_m", 64)),
@@ -145,6 +162,14 @@ def get_config(path: str) -> Config:
             moe_hard_start_epoch=int(model.get("moe_hard_start_epoch", 10)),
             classifier_hidden=int(model.get("classifier_hidden", 256)),
             classifier_dropout=float(model.get("classifier_dropout", 0.20)),
+            text_graph_layers=int(model.get("text_graph_layers", 1)),
+            text_graph_dropout=float(model.get("text_graph_dropout", 0.05)),
+            text_graph_use_next_edges=bool(model.get("text_graph_use_next_edges", True)),
+            sentence_local_layers=int(model.get("sentence_local_layers", 1)),
+            sentence_local_heads=int(model.get("sentence_local_heads", 8)),
+            hier_readout_hidden=int(model.get("hier_readout_hidden", 256)),
+            hier_readout_dropout=float(model.get("hier_readout_dropout", 0.10)),
+            text_dual_fusion_dropout=float(model.get("text_dual_fusion_dropout", 0.10)),
         ),
         loss=LossConfig(
             alpha_txt=float(loss.get("alpha_txt", 0.5)),

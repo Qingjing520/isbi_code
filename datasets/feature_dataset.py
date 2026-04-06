@@ -46,6 +46,9 @@ class MultiModalFeatureDataset(Dataset):
         text_dir: str,
         text_mode: str = "sentence_pt",
         text_graph_feature: str = "node_features",
+        text_use_graph_structure: bool = False,
+        sentence_text_dir: str = "",
+        graph_text_dir: str = "",
         mode: str = "train",
     ):
         assert mode in ["train", "val", "test"]
@@ -53,12 +56,16 @@ class MultiModalFeatureDataset(Dataset):
         self.text_dir = text_dir
         self.text_mode = text_mode
         self.text_graph_feature = text_graph_feature
+        self.text_use_graph_structure = text_use_graph_structure
+        self.sentence_text_dir = sentence_text_dir or text_dir
+        self.graph_text_dir = graph_text_dir or text_dir
 
-        valid_text_modes = {"sentence_pt", "hierarchy_graph"}
+        valid_text_modes = {"sentence_pt", "hierarchy_graph", "dual_text"}
         if self.text_mode not in valid_text_modes:
             raise ValueError(f"text_mode must be one of {sorted(valid_text_modes)}. Got: {self.text_mode}")
 
         self._text_exact_index, self._text_case_index = _build_text_index(text_dir)
+        self._graph_exact_index, self._graph_case_index = _build_text_index(self.graph_text_dir)
 
         split_df = pd.read_csv(split_csv)
         if mode not in split_df.columns:
@@ -73,17 +80,25 @@ class MultiModalFeatureDataset(Dataset):
 
         label_dict = {(r["case_id"], r["slide_id"]): int(r["label"]) for _, r in label_df.iterrows()}
 
-        self.samples: List[Tuple[str, str, int, str]] = []
+        self.samples: List[Tuple[str, object, int, str]] = []
         for slide_id in slide_ids:
             case_id = _extract_case_id(slide_id)
             image_path = os.path.join(image_dir, f"{slide_id}.pt")
-            text_path = self._resolve_text_path(slide_id, case_id)
-            if not (os.path.exists(image_path) and os.path.exists(text_path)):
-                continue
+            if self.text_mode == "dual_text":
+                sentence_path = os.path.join(self.sentence_text_dir, f"{case_id}.pt")
+                graph_path = self._resolve_graph_text_path(slide_id, case_id)
+                if not (os.path.exists(image_path) and os.path.exists(sentence_path) and os.path.exists(graph_path)):
+                    continue
+                text_ref: object = {"sentence_path": sentence_path, "graph_path": graph_path}
+            else:
+                text_path = self._resolve_text_path(slide_id, case_id)
+                if not (os.path.exists(image_path) and os.path.exists(text_path)):
+                    continue
+                text_ref = text_path
             label = label_dict.get((case_id, slide_id), None)
             if label is None:
                 continue
-            self.samples.append((image_path, text_path, label, slide_id))
+            self.samples.append((image_path, text_ref, label, slide_id))
 
     def _resolve_text_path(self, slide_id: str, case_id: str) -> str:
         if self.text_mode == "sentence_pt":
@@ -103,26 +118,56 @@ class MultiModalFeatureDataset(Dataset):
 
         return os.path.join(self.text_dir, f"{slide_id}.pt")
 
+    def _resolve_graph_text_path(self, slide_id: str, case_id: str) -> str:
+        exact_path = self._graph_exact_index.get(slide_id)
+        if exact_path:
+            return exact_path
+
+        case_exact = self._graph_exact_index.get(case_id)
+        if case_exact:
+            return case_exact
+
+        case_matches = self._graph_case_index.get(case_id, [])
+        if case_matches:
+            return case_matches[0]
+
+        return os.path.join(self.graph_text_dir, f"{slide_id}.pt")
+
     def __len__(self) -> int:
         return len(self.samples)
 
     def __getitem__(self, idx: int):
-        image_path, text_path, label, slide_id = self.samples[idx]
+        image_path, text_ref, label, slide_id = self.samples[idx]
         image_feat = torch.load(image_path)  # [n, 512]
-        text_payload = torch.load(text_path)
-        if self.text_mode == "sentence_pt":
-            text_feat = text_payload    # [N, 512]
+        if self.text_mode == "dual_text":
+            assert isinstance(text_ref, dict)
+            sentence_feat = torch.load(text_ref["sentence_path"])
+            graph_payload = torch.load(text_ref["graph_path"])
+            if not isinstance(graph_payload, dict):
+                raise TypeError(f"Expected a dict graph payload for dual_text mode: {text_ref['graph_path']}")
+            text_feat = {
+                "sentence_pt": sentence_feat,
+                "hierarchy_graph": graph_payload,
+            }
         else:
-            if not isinstance(text_payload, dict):
-                raise TypeError(f"Expected a dict graph payload for hierarchy_graph mode: {text_path}")
-            if self.text_graph_feature not in text_payload:
-                raise KeyError(
-                    f"text_graph_feature='{self.text_graph_feature}' not found in {text_path}. "
-                    f"Available keys: {sorted(text_payload.keys())}"
-                )
-            text_feat = text_payload[self.text_graph_feature]
-            if isinstance(text_feat, torch.Tensor) and text_feat.dim() == 1:
-                text_feat = text_feat.unsqueeze(0)
+            text_path = str(text_ref)
+            text_payload = torch.load(text_path)
+            if self.text_mode == "sentence_pt":
+                text_feat = text_payload    # [N, 512]
+            else:
+                if not isinstance(text_payload, dict):
+                    raise TypeError(f"Expected a dict graph payload for hierarchy_graph mode: {text_path}")
+                if self.text_use_graph_structure:
+                    text_feat = text_payload
+                else:
+                    if self.text_graph_feature not in text_payload:
+                        raise KeyError(
+                            f"text_graph_feature='{self.text_graph_feature}' not found in {text_path}. "
+                            f"Available keys: {sorted(text_payload.keys())}"
+                        )
+                    text_feat = text_payload[self.text_graph_feature]
+                    if isinstance(text_feat, torch.Tensor) and text_feat.dim() == 1:
+                        text_feat = text_feat.unsqueeze(0)
         return image_feat, text_feat, torch.tensor(label, dtype=torch.long), slide_id
 
 
@@ -140,6 +185,9 @@ def get_dataloaders(cfg):
         cfg.data.text_dir,
         text_mode=getattr(cfg.data, "text_mode", "sentence_pt"),
         text_graph_feature=getattr(cfg.data, "text_graph_feature", "node_features"),
+        text_use_graph_structure=getattr(cfg.data, "text_use_graph_structure", False),
+        sentence_text_dir=getattr(cfg.data, "sentence_text_dir", ""),
+        graph_text_dir=getattr(cfg.data, "graph_text_dir", ""),
         mode="train",
     )
     # val_set = MultiModalFeatureDataset(
@@ -152,6 +200,9 @@ def get_dataloaders(cfg):
         cfg.data.text_dir,
         text_mode=getattr(cfg.data, "text_mode", "sentence_pt"),
         text_graph_feature=getattr(cfg.data, "text_graph_feature", "node_features"),
+        text_use_graph_structure=getattr(cfg.data, "text_use_graph_structure", False),
+        sentence_text_dir=getattr(cfg.data, "sentence_text_dir", ""),
+        graph_text_dir=getattr(cfg.data, "graph_text_dir", ""),
         mode="test",
     )
 

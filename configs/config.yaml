@@ -8,12 +8,12 @@ data:
 
   # 当前默认示例：
   # KIRC + 层次图文本特征（hierarchy_graph）
-  split_file: D:\Tasks\split_0.csv
+  split_file: D:\Tasks\Split_Table\KIRC\split_0.csv
   label_file: D:\Tasks\Pathologic_Stage_Label\KIRC_pathologic_stage.csv
-  image_dir: D:\CLAM_output\features\pt_files
+  image_dir: D:\Tasks\WSI_extract_features\KIRC_WSI_extract_features
   text_dir: D:\Tasks\isbi_code\pathology_report_extraction\Output\text_hierarchy_graphs_masked\KIRC
 
-  # 文本模式二选一：
+  # 文本模式三选一：
   # 1. sentence_pt
   #    论文原始方式，读取 case-level 句子特征 pt
   #    例如：
@@ -26,7 +26,15 @@ data:
   #    例如：
   #    D:\Tasks\isbi_code\pathology_report_extraction\Output\text_hierarchy_graphs_masked\KIRC
   #    D:\Tasks\isbi_code\pathology_report_extraction\Output\text_hierarchy_graphs_masked\BRCA
-  text_mode: hierarchy_graph
+  #
+  # 3. dual_text
+  #    双路文本模式：
+  #    - sentence_text_dir 读取原论文句子特征
+  #    - graph_text_dir 读取层次图
+  #    二者先在文本侧融合，再与 WSI 融合
+  text_mode: dual_text
+  sentence_text_dir: D:\Tasks\Text_Sentence_extract_features\KIRC_text
+  graph_text_dir: D:\Tasks\isbi_code\pathology_report_extraction\Output\text_hierarchy_graphs_masked\KIRC
 
   # 只有在 text_mode: hierarchy_graph 时才会使用这个字段
   # 可选：
@@ -35,32 +43,35 @@ data:
   # - section_features: 只用 section 节点特征
   # - document_feature: 只用 document 节点特征（会自动扩成 1 x 512）
   text_graph_feature: node_features
+  # false: 旧行为，只把层次图里的某个特征张量当作序列输入
+  # true:  新行为，显式使用 edge_index / edge_type / node_type 做图结构编码
+  text_use_graph_structure: false
 
   # -------------------------
   # 常见切换示例
   # -------------------------
   #
   # A. 切到 BRCA + 层次图文本：
-  # split_file: D:\Tasks\CLAM-master\results\stage_classification_s1\splits_149.csv
+  # split_file: D:\Tasks\Split_Table\BRCA\split_149.csv
   # label_file: D:\Tasks\Pathologic_Stage_Label\BRCA_pathologic_stage.csv
   # text_dir: D:\Tasks\isbi_code\pathology_report_extraction\Output\text_hierarchy_graphs_masked\BRCA
   # text_mode: hierarchy_graph
   # text_graph_feature: node_features
   #
   # B. 切到 KIRC + 原论文句子文本：
-  # split_file: D:\Tasks\split_0.csv
+  # split_file: D:\Tasks\Split_Table\KIRC\split_0.csv
   # label_file: D:\Tasks\Pathologic_Stage_Label\KIRC_pathologic_stage.csv
   # text_dir: D:\Tasks\text_extract_features\KIRC_text
   # text_mode: sentence_pt
   #
   # C. 切到 BRCA + 原论文句子文本：
-  # split_file: D:\Tasks\CLAM-master\results\stage_classification_s1\splits_149.csv
+  # split_file: D:\Tasks\Split_Table\BRCA\split_149.csv
   # label_file: D:\Tasks\Pathologic_Stage_Label\BRCA_pathologic_stage.csv
   # text_dir: D:\Tasks\text_extract_features\BRCA_text
   # text_mode: sentence_pt
   #
   # D. 切到 LUSC + 原论文句子文本：
-  # split_file: D:\TCGA\LUSC_WSI_extract_features\features\Splits\split_149.csv
+  # split_file: D:\Tasks\Split_Table\LUSC\split_149.csv
   # label_file: D:\Tasks\Pathologic_Stage_Label\LUSC_pathologic_stage.csv
   # text_dir: D:\Tasks\text_extract_features\LUSC_text
   # text_mode: sentence_pt
@@ -90,6 +101,18 @@ model:
   moe_hard_start_epoch: 10
   classifier_hidden: 256
   classifier_dropout: 0.2
+  # 仅在 data.text_mode=hierarchy_graph 且 data.text_use_graph_structure=true 时生效
+  text_graph_layers: 1
+  text_graph_dropout: 0.05
+  # true: 使用 parent + next 两类边
+  # false: 只使用 parent 父子边
+  text_graph_use_next_edges: true
+  # dual_text 分支配置
+  sentence_local_layers: 1
+  sentence_local_heads: 8
+  hier_readout_hidden: 256
+  hier_readout_dropout: 0.1
+  text_dual_fusion_dropout: 0.1
 
 loss:
   warmup_epochs: 3
