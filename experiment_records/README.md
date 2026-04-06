@@ -7,4 +7,5 @@ This directory stores lightweight experiment summaries that are safe to version 
 - Cross-dataset summary: `text_mode_comparison_brca_kirc.md`
 - Paper-style writeup draft: `text_mode_comparison_brca_kirc_paper_ready.md`
 - BRCA hierarchy-graph exploration log: `brca_hierarchy_graph_exploration.md`
+- BRCA fair comparison on aligned splits 0-9: `brca_sentence_vs_dual_text_10splits/README.md`
 - KIRC fair comparison on aligned splits 0-9: `kirc_sentence_vs_dual_text_10splits/README.md`

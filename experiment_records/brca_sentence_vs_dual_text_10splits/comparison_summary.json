@@ -1,0 +1,39 @@
+{
+  "dataset": "BRCA",
+  "splits": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9
+  ],
+  "num_splits": 10,
+  "sentence_pt": {
+    "acc_mean": 0.7560975611209869,
+    "acc_std": 0.03194614656553007,
+    "auc_mean": 0.7427016985138004,
+    "auc_std": 0.043510658847999255
+  },
+  "dual_text": {
+    "acc_mean": 0.7365853667259217,
+    "acc_std": 0.05929945820852356,
+    "auc_mean": 0.7301088110403396,
+    "auc_std": 0.04459530882249919
+  },
+  "delta": {
+    "acc_mean": -0.019512194395065307,
+    "auc_mean": -0.012592887473460757,
+    "dual_better_acc_splits": 2,
+    "dual_better_auc_splits": 4
+  },
+  "analysis": {
+    "fusion_gate_mean": 0.41901974127227554,
+    "doc_attention_entropy_mean": 0.5458290003734015,
+    "doc_attention_max_mean": 0.6994513621562864
+  }
+}
