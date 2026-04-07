@@ -1,10 +1,12 @@
 from __future__ import annotations
 import os
 import json
+import math
 import random
 from datetime import datetime
 from dataclasses import asdict
 from typing import List, Tuple
+from collections import Counter
 
 import numpy as np
 import torch
@@ -87,6 +89,9 @@ def move_text_batch_to_device(
                 {
                     "sentence_pt": payload["sentence_pt"].to(device).float(),
                     "hierarchy_graph": graph_item,
+                    "sentence_path": payload.get("sentence_path", ""),
+                    "graph_path": payload.get("graph_path", ""),
+                    "graph_json_path": payload.get("graph_json_path", ""),
                 }
             )
         return moved
@@ -130,17 +135,27 @@ def encode_text_batch(
         graph_sentence_nodes: List[torch.Tensor] = []
         graph_section_vecs: List[torch.Tensor] = []
         graph_doc_vecs: List[torch.Tensor] = []
+        graph_doc_section_attn: List[torch.Tensor] = []
+        graph_section_sentence_attn: List[list[torch.Tensor]] = []
+        graph_json_paths: List[str] = []
+        graph_section_attention_mix: List[torch.Tensor] = []
+        graph_document_attention_mix: List[torch.Tensor] = []
         for payload in txt_list:
             graph_payload = payload["hierarchy_graph"]  # type: ignore[index]
             sentence_features = graph_payload["sentence_features"].float()
             mapped_sentence_features = mapper(sentence_features)
-            sentence_out, section_out, document_out = hier_text_branch(
+            sentence_out, section_out, document_out, branch_analysis = hier_text_branch(
                 sentence_features=mapped_sentence_features,
                 section_spans=graph_payload["section_spans"].long(),
             )
             graph_sentence_nodes.append(sentence_out)
             graph_section_vecs.append(section_out)
             graph_doc_vecs.append(document_out)
+            graph_doc_section_attn.append(branch_analysis["document_section_attn"])
+            graph_section_sentence_attn.append(branch_analysis["section_sentence_attn"])
+            graph_json_paths.append(str(payload.get("graph_json_path", "")))
+            graph_section_attention_mix.append(branch_analysis["section_attention_mix"])
+            graph_document_attention_mix.append(branch_analysis["document_attention_mix"])
 
         graph_vec = torch.stack(graph_doc_vecs, dim=0)
         fused_vec, gates = dual_text_fusion(sentence_vec, graph_vec)
@@ -151,6 +166,11 @@ def encode_text_batch(
             "graph_sentence_nodes": graph_sentence_nodes,
             "graph_section_vecs": graph_section_vecs,
             "fusion_gate": gates,
+            "graph_doc_section_attn": graph_doc_section_attn,
+            "graph_section_sentence_attn": graph_section_sentence_attn,
+            "graph_json_paths": graph_json_paths,
+            "graph_section_attention_mix": graph_section_attention_mix,
+            "graph_document_attention_mix": graph_document_attention_mix,
         }
         return fused_nodes, fused_vec, extras
 
@@ -233,6 +253,39 @@ def _ts() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _load_section_titles(graph_json_path: str, cache: dict[str, list[str]]) -> list[str]:
+    graph_json_path = str(graph_json_path or "").strip()
+    if not graph_json_path:
+        return []
+    cached = cache.get(graph_json_path)
+    if cached is not None:
+        return cached
+    if not os.path.exists(graph_json_path):
+        cache[graph_json_path] = []
+        return []
+    with open(graph_json_path, "r", encoding="utf-8") as f:
+        payload = json.load(f)
+    sections = []
+    for node in payload.get("nodes", []):
+        if node.get("node_type") != "section":
+            continue
+        sections.append((int(node.get("section_index", len(sections))), str(node.get("section_title", "Section"))))
+    sections.sort(key=lambda x: x[0])
+    titles = [title for _idx, title in sections]
+    cache[graph_json_path] = titles
+    return titles
+
+
+def _attention_entropy(attn: torch.Tensor) -> float | None:
+    attn = attn.detach().cpu().view(-1)
+    if attn.numel() == 0:
+        return None
+    entropy = -torch.sum(attn * torch.log(attn.clamp_min(1e-12))).item()
+    if attn.numel() > 1:
+        entropy = entropy / math.log(attn.numel())
+    return float(entropy)
+
+
 @torch.no_grad()
 def evaluate(
     cfg,
@@ -262,6 +315,15 @@ def evaluate(
 
     device = next(mapper.parameters()).device
     all_labels, all_probs, all_preds = [], [], []
+    analysis: dict[str, object] = {}
+    fusion_gates: list[float] = []
+    doc_attn_entropies: list[float] = []
+    doc_attn_maxima: list[float] = []
+    section_attention_mixes: list[float] = []
+    document_attention_mixes: list[float] = []
+    top_section_counter: Counter[str] = Counter()
+    section_title_cache: dict[str, list[str]] = {}
+    sample_details: list[dict[str, object]] = []
     text_mode = getattr(cfg.data, "text_mode", "sentence_pt")
     text_use_graph_structure = bool(getattr(cfg.data, "text_use_graph_structure", False))
 
@@ -304,6 +366,95 @@ def evaluate(
         all_probs.extend(probs.detach().cpu().tolist())
         all_preds.extend(preds.detach().cpu().tolist())
 
+        if text_mode == "dual_text":
+            batch_size = len(labels.detach().cpu().view(-1).tolist())
+            batch_ids = [str(x) for x in _ids]
+            batch_labels = [int(x) for x in labels.detach().cpu().view(-1).tolist()]
+            batch_probs = [float(x) for x in probs.detach().cpu().view(-1).tolist()]
+            batch_preds = [int(x) for x in preds.detach().cpu().view(-1).tolist()]
+
+            gate_values: list[float | None] = [None] * batch_size
+            gate_tensor = _txt_extra.get("fusion_gate")
+            if isinstance(gate_tensor, torch.Tensor):
+                gate_values = [float(x) for x in gate_tensor.detach().cpu().view(-1).tolist()]
+                fusion_gates.extend(gate_values)
+
+            section_mix_values: list[float | None] = [None] * batch_size
+            section_mix_list = _txt_extra.get("graph_section_attention_mix", [])
+            if isinstance(section_mix_list, list):
+                section_mix_values = [
+                    float(x.detach().cpu().view(-1)[0].item()) if isinstance(x, torch.Tensor) and x.numel() else None
+                    for x in section_mix_list[:batch_size]
+                ]
+                section_attention_mixes.extend([x for x in section_mix_values if x is not None])
+
+            document_mix_values: list[float | None] = [None] * batch_size
+            document_mix_list = _txt_extra.get("graph_document_attention_mix", [])
+            if isinstance(document_mix_list, list):
+                document_mix_values = [
+                    float(x.detach().cpu().view(-1)[0].item()) if isinstance(x, torch.Tensor) and x.numel() else None
+                    for x in document_mix_list[:batch_size]
+                ]
+                document_attention_mixes.extend([x for x in document_mix_values if x is not None])
+
+            doc_attn_list = _txt_extra.get("graph_doc_section_attn", [])
+            graph_json_paths = _txt_extra.get("graph_json_paths", [])
+            if not isinstance(doc_attn_list, list):
+                doc_attn_list = []
+            if not isinstance(graph_json_paths, list):
+                graph_json_paths = []
+
+            for sample_idx in range(batch_size):
+                graph_json_path = str(graph_json_paths[sample_idx]) if sample_idx < len(graph_json_paths) else ""
+                attn = doc_attn_list[sample_idx] if sample_idx < len(doc_attn_list) else None
+                top_idx: int | None = None
+                top_section = None
+                top_weight = None
+                entropy = None
+                section_titles = _load_section_titles(graph_json_path, section_title_cache)
+                if isinstance(attn, torch.Tensor):
+                    attn_cpu = attn.detach().cpu().view(-1)
+                    if attn_cpu.numel() > 0:
+                        top_idx = int(attn_cpu.argmax().item())
+                        top_weight = float(attn_cpu.max().item())
+                        entropy = _attention_entropy(attn_cpu)
+                        doc_attn_maxima.append(top_weight)
+                        if entropy is not None:
+                            doc_attn_entropies.append(entropy)
+                        if top_idx < len(section_titles):
+                            top_section = section_titles[top_idx]
+                        else:
+                            top_section = f"section_{top_idx}"
+                        top_section_counter[str(top_section)] += 1
+
+                sample_details.append(
+                    {
+                        "slide_id": batch_ids[sample_idx] if sample_idx < len(batch_ids) else "",
+                        "label": batch_labels[sample_idx],
+                        "pred": batch_preds[sample_idx],
+                        "prob_late": batch_probs[sample_idx],
+                        "correct": bool(batch_labels[sample_idx] == batch_preds[sample_idx]),
+                        "fusion_gate": gate_values[sample_idx] if sample_idx < len(gate_values) else None,
+                        "sentence_branch_weight": gate_values[sample_idx] if sample_idx < len(gate_values) else None,
+                        "graph_branch_weight": (
+                            1.0 - gate_values[sample_idx]
+                            if sample_idx < len(gate_values) and gate_values[sample_idx] is not None
+                            else None
+                        ),
+                        "graph_json_path": graph_json_path,
+                        "top_section_index": top_idx,
+                        "top_section_title": top_section,
+                        "top_section_attention": top_weight,
+                        "doc_attention_entropy": entropy,
+                        "section_attention_mix": section_mix_values[sample_idx]
+                        if sample_idx < len(section_mix_values)
+                        else None,
+                        "document_attention_mix": document_mix_values[sample_idx]
+                        if sample_idx < len(document_mix_values)
+                        else None,
+                    }
+                )
+
     if len(all_labels) == 0:
         return {"acc": 0.0, "auc": float("nan")}
 
@@ -312,11 +463,29 @@ def evaluate(
     acc = float(np.mean((y_pred == y_true).astype(np.float32)))
     auc = safe_auc(all_labels, all_probs)
 
+    if text_mode == "dual_text":
+        graph_branch_weights = [1.0 - x for x in fusion_gates]
+        analysis = {
+            "fusion_gate_is_sentence_branch_weight": True,
+            "fusion_gate_mean": float(np.mean(fusion_gates)) if fusion_gates else None,
+            "fusion_gate_std": float(np.std(fusion_gates)) if fusion_gates else None,
+            "fusion_gate_min": float(np.min(fusion_gates)) if fusion_gates else None,
+            "fusion_gate_max": float(np.max(fusion_gates)) if fusion_gates else None,
+            "sentence_branch_weight_mean": float(np.mean(fusion_gates)) if fusion_gates else None,
+            "graph_branch_weight_mean": float(np.mean(graph_branch_weights)) if graph_branch_weights else None,
+            "doc_attention_entropy_mean": float(np.mean(doc_attn_entropies)) if doc_attn_entropies else None,
+            "doc_attention_max_mean": float(np.mean(doc_attn_maxima)) if doc_attn_maxima else None,
+            "section_attention_mix_mean": float(np.mean(section_attention_mixes)) if section_attention_mixes else None,
+            "document_attention_mix_mean": float(np.mean(document_attention_mixes)) if document_attention_mixes else None,
+            "top_section_counts": dict(top_section_counter.most_common()),
+            "sample_details": sample_details,
+        }
+
     # if print_dist:
     #     print("tgt label dist:", np.bincount(y_true, minlength=2).tolist())
     #     print("tgt pred  dist:", np.bincount(y_pred, minlength=2).tolist())
 
-    return {"acc": acc, "auc": auc}
+    return {"acc": acc, "auc": auc, "analysis": analysis}
 
 
 def train_one_split(cfg):
@@ -374,6 +543,7 @@ def train_one_split(cfg):
                 dropout=cfg.model.hier_readout_dropout,
                 sentence_local_layers=cfg.model.sentence_local_layers,
                 sentence_local_heads=cfg.model.sentence_local_heads,
+                readout_attention_init=cfg.model.hier_readout_attention_init,
             ).to(device)
             dual_text_fusion = DualTextFusion(
                 dim=cfg.model.feat_dim,
@@ -453,7 +623,16 @@ def train_one_split(cfg):
         # alignment weight factor (decay)
         decay_factor = _linear_decay_factor(epoch, cfg.train.num_epochs, to=align_decay_to)
 
-        running = {"loss_total": 0.0, "loss_cls": 0.0, "loss_txt": 0.0, "loss_node": 0.0, "loss_topo": 0.0, "steps": 0}
+        running = {
+            "loss_total": 0.0,
+            "loss_cls": 0.0,
+            "loss_txt": 0.0,
+            "loss_node": 0.0,
+            "loss_topo": 0.0,
+            "loss_gate": 0.0,
+            "graph_weight": 0.0,
+            "steps": 0,
+        }
 
         for img_s, txt_s, y_s, _ids_s in train_loader:
             try:
@@ -517,6 +696,22 @@ def train_one_split(cfg):
             loss_txt = torch.zeros((), device=device)
             loss_node = torch.zeros((), device=device)
             loss_topo = torch.zeros((), device=device)
+            loss_gate = torch.zeros((), device=device)
+            graph_weight_mean = torch.zeros((), device=device)
+
+            gate_reg_weight = float(_get_optional(cfg, "loss.dual_text_gate_reg_weight", 0.0))
+            graph_weight_target = float(_get_optional(cfg, "loss.dual_text_graph_weight_target", 0.2))
+            if text_mode == "dual_text" and gate_reg_weight > 0:
+                gate_tensors = []
+                for extra in (txt_s_extra, txt_t_extra):
+                    gate = extra.get("fusion_gate")
+                    if isinstance(gate, torch.Tensor):
+                        gate_tensors.append(gate.view(-1))
+                if gate_tensors:
+                    sentence_weights = torch.cat(gate_tensors, dim=0)
+                    graph_weights = 1.0 - sentence_weights
+                    graph_weight_mean = graph_weights.detach().mean()
+                    loss_gate = (graph_weights - graph_weight_target).pow(2).mean()
 
             if epoch >= warmup_epochs:
                 nodes_s_list, topo_s_list = [], []
@@ -578,6 +773,7 @@ def train_one_split(cfg):
             loss = (
                 loss_cls
                 + decay_factor * (cfg.loss.alpha_txt * loss_txt + cfg.loss.beta_node * loss_node + cfg.loss.gamma_topo * loss_topo)
+                + gate_reg_weight * loss_gate
             )
 
             optimizer.zero_grad(set_to_none=True)
@@ -591,10 +787,12 @@ def train_one_split(cfg):
             running["loss_txt"] += float(loss_txt.item())
             running["loss_node"] += float(loss_node.item())
             running["loss_topo"] += float(loss_topo.item())
+            running["loss_gate"] += float(loss_gate.item())
+            running["graph_weight"] += float(graph_weight_mean.item())
             running["steps"] += 1
 
         steps = max(running["steps"], 1)
-        for k in ["loss_total", "loss_cls", "loss_txt", "loss_node", "loss_topo"]:
+        for k in ["loss_total", "loss_cls", "loss_txt", "loss_node", "loss_topo", "loss_gate", "graph_weight"]:
             running[k] /= steps
 
         # ===== Evaluate on target(test) =====
@@ -659,7 +857,8 @@ def train_one_split(cfg):
         print(
             f"[{_ts()}] [Epoch {epoch:03d}] {mode_str} "
             f"train(loss={running['loss_total']:.4f}, cls={running['loss_cls']:.4f}, "
-            f"txt={running['loss_txt']:.4f}, node={running['loss_node']:.4f}, topo={running['loss_topo']:.4f}) | "
+            f"txt={running['loss_txt']:.4f}, node={running['loss_node']:.4f}, topo={running['loss_topo']:.4f}, "
+            f"gate={running['loss_gate']:.4f}, graph_w={running['graph_weight']:.3f}) | "
             f"tgt(acc={tgt_metrics['acc']:.4f}, auc={tgt_metrics['auc']:.4f}) | "
             f"best={best_metric:.4f}"
         )
@@ -722,6 +921,7 @@ def load_and_eval(cfg, ckpt_path: str):
                 dropout=cfg.model.hier_readout_dropout,
                 sentence_local_layers=cfg.model.sentence_local_layers,
                 sentence_local_heads=cfg.model.sentence_local_heads,
+                readout_attention_init=cfg.model.hier_readout_attention_init,
             ).to(device)
             dual_text_fusion = DualTextFusion(
                 dim=cfg.model.feat_dim,
@@ -753,7 +953,7 @@ def load_and_eval(cfg, ckpt_path: str):
     if text_graph_encoder is not None and ckpt.get("text_graph_encoder") is not None:
         text_graph_encoder.load_state_dict(ckpt["text_graph_encoder"])
     if hier_text_branch is not None and ckpt.get("hier_text_branch") is not None:
-        hier_text_branch.load_state_dict(ckpt["hier_text_branch"])
+        hier_text_branch.load_state_dict(ckpt["hier_text_branch"], strict=False)
     if dual_text_fusion is not None and ckpt.get("dual_text_fusion") is not None:
         dual_text_fusion.load_state_dict(ckpt["dual_text_fusion"])
     moe.load_state_dict(ckpt["moe"])
@@ -774,6 +974,7 @@ def load_and_eval(cfg, ckpt_path: str):
     )
     return {
         "target": tgt_metrics,
+        "analysis": tgt_metrics.get("analysis", {}),
         "epoch": int(ckpt.get("epoch", -1)),
         "best_metric": float(ckpt.get("best_metric", float("nan"))),
     }

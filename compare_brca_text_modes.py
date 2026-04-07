@@ -56,6 +56,18 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--sentence_text_dir", type=str, default=str(DEFAULT_SENTENCE_TEXT_DIR))
     ap.add_argument("--hierarchy_text_dir", type=str, default=str(DEFAULT_HIERARCHY_TEXT_DIR))
     ap.add_argument("--output_dir", type=str, default=str(DEFAULT_OUTPUT_DIR))
+    ap.add_argument(
+        "--reuse_sentence_exp_root",
+        type=str,
+        default="",
+        help="Optional existing experiment root for sentence_pt mode. When provided, sentence_pt splits are reused from here.",
+    )
+    ap.add_argument(
+        "--reuse_hierarchy_exp_root",
+        type=str,
+        default="",
+        help="Optional existing experiment root for hierarchy_graph mode. When provided, hierarchy_graph splits are reused from here.",
+    )
     ap.add_argument("--num_splits", type=int, default=5)
     ap.add_argument("--split_offset", type=int, default=0)
     ap.add_argument("--hierarchy_feature", type=str, default="section_features")
@@ -64,6 +76,16 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default="",
         help="Dataset name shown in logs and summaries. If empty, infer from the provided paths.",
+    )
+    ap.add_argument(
+        "--use_graph_structure",
+        action="store_true",
+        help="Enable explicit graph-structure encoding for hierarchy_graph mode.",
+    )
+    ap.add_argument(
+        "--disable_next_edges",
+        action="store_true",
+        help="Use only parent edges in the graph encoder (drop next edges).",
     )
     ap.add_argument(
         "--train_num_workers",
@@ -100,6 +122,7 @@ def _dataset_size(
     text_dir: str,
     text_mode: str,
     text_graph_feature: str,
+    text_use_graph_structure: bool,
     mode: str,
 ) -> int:
     ds = MultiModalFeatureDataset(
@@ -109,6 +132,7 @@ def _dataset_size(
         text_dir=text_dir,
         text_mode=text_mode,
         text_graph_feature=text_graph_feature,
+        text_use_graph_structure=text_use_graph_structure,
         mode=mode,
     )
     return len(ds)
@@ -144,10 +168,19 @@ def _mode_cfg(base_cfg: Any, args: argparse.Namespace, split_idx: int, mode_name
     cfg.data.text_graph_feature = (
         args.hierarchy_feature if mode_name == "hierarchy_graph" else "node_features"
     )
+    cfg.data.text_use_graph_structure = bool(args.use_graph_structure and mode_name == "hierarchy_graph")
+    cfg.model.text_graph_use_next_edges = not bool(args.disable_next_edges)
     cfg.train.num_workers = int(args.train_num_workers)
-    cfg.output.exp_dir = os.path.abspath(
-        os.path.join(args.output_dir, mode_name, f"split_{split_idx}")
-    )
+    if mode_name == "sentence_pt" and str(args.reuse_sentence_exp_root).strip():
+        exp_root = os.path.abspath(args.reuse_sentence_exp_root)
+        cfg.output.exp_dir = os.path.join(exp_root, f"split_{split_idx}")
+    elif mode_name == "hierarchy_graph" and str(args.reuse_hierarchy_exp_root).strip():
+        exp_root = os.path.abspath(args.reuse_hierarchy_exp_root)
+        cfg.output.exp_dir = os.path.join(exp_root, f"split_{split_idx}")
+    else:
+        cfg.output.exp_dir = os.path.abspath(
+            os.path.join(args.output_dir, mode_name, f"split_{split_idx}")
+        )
     return cfg
 
 
@@ -231,6 +264,7 @@ def _write_results_csv(output_dir: str, records: list[dict[str, Any]]) -> None:
         "mode",
         "text_dir",
         "text_graph_feature",
+        "text_use_graph_structure",
         "train_size",
         "test_size",
         "acc",
@@ -259,7 +293,11 @@ def main() -> None:
         "split_indices": split_indices,
         "sentence_text_dir": os.path.abspath(args.sentence_text_dir),
         "hierarchy_text_dir": os.path.abspath(args.hierarchy_text_dir),
+        "reuse_sentence_exp_root": os.path.abspath(args.reuse_sentence_exp_root) if str(args.reuse_sentence_exp_root).strip() else "",
+        "reuse_hierarchy_exp_root": os.path.abspath(args.reuse_hierarchy_exp_root) if str(args.reuse_hierarchy_exp_root).strip() else "",
         "hierarchy_feature": args.hierarchy_feature,
+        "use_graph_structure": bool(args.use_graph_structure),
+        "disable_next_edges": bool(args.disable_next_edges),
         "label_file": os.path.abspath(args.label_file),
         "image_dir": os.path.abspath(args.image_dir),
         "output_dir": os.path.abspath(args.output_dir),
@@ -283,6 +321,7 @@ def main() -> None:
                 cfg.data.text_dir,
                 cfg.data.text_mode,
                 cfg.data.text_graph_feature,
+                bool(getattr(cfg.data, "text_use_graph_structure", False)),
                 mode="train",
             )
             test_size = _dataset_size(
@@ -292,6 +331,7 @@ def main() -> None:
                 cfg.data.text_dir,
                 cfg.data.text_mode,
                 cfg.data.text_graph_feature,
+                bool(getattr(cfg.data, "text_use_graph_structure", False)),
                 mode="test",
             )
 
@@ -303,7 +343,8 @@ def main() -> None:
             )
             if mode_name == "hierarchy_graph":
                 print(
-                    f"[{_ts()}] [{dataset_name} compare] hierarchy_feature={cfg.data.text_graph_feature}",
+                    f"[{_ts()}] [{dataset_name} compare] hierarchy_feature={cfg.data.text_graph_feature} | "
+                    f"use_graph_structure={cfg.data.text_use_graph_structure}",
                     flush=True,
                 )
             print("-" * 100)
@@ -313,6 +354,7 @@ def main() -> None:
                 "mode": mode_name,
                 "text_dir": cfg.data.text_dir,
                 "text_graph_feature": cfg.data.text_graph_feature,
+                "text_use_graph_structure": bool(getattr(cfg.data, "text_use_graph_structure", False)),
                 "train_size": train_size,
                 "test_size": test_size,
                 "acc": float(metrics["acc"]),

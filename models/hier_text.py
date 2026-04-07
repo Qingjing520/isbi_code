@@ -76,40 +76,95 @@ class HierarchicalReadout(nn.Module):
     Sentence -> Section -> Document hierarchical attention pooling.
     """
 
-    def __init__(self, dim: int = 512, hidden: int = 256, dropout: float = 0.1):
+    def __init__(
+        self,
+        dim: int = 512,
+        hidden: int = 256,
+        dropout: float = 0.1,
+        attention_init: float = -0.5,
+    ):
         super().__init__()
         self.section_pool = ScalarAttentionPool(dim=dim, hidden=hidden, dropout=dropout)
         self.document_pool = ScalarAttentionPool(dim=dim, hidden=hidden, dropout=dropout)
+        # Attention can be sharp on noisy pathology sections, so mix it with a mean-pooling fallback.
+        self.section_attention_mix_logit = nn.Parameter(torch.tensor(float(attention_init)))
+        self.document_attention_mix_logit = nn.Parameter(torch.tensor(float(attention_init)))
+
+    def _mix_attention_with_mean(
+        self,
+        attention_vec: torch.Tensor,
+        mean_vec: torch.Tensor,
+        mix_logit: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        mix = torch.sigmoid(mix_logit).to(dtype=attention_vec.dtype, device=attention_vec.device)
+        return mix * attention_vec + (1.0 - mix) * mean_vec, mix
 
     def forward(
         self,
         sentence_nodes: torch.Tensor,
         section_spans: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, dict]:
         if sentence_nodes.dim() != 2:
             raise ValueError(f"Expected [N, D] sentence nodes, got shape {tuple(sentence_nodes.shape)}")
 
         section_vecs: list[torch.Tensor] = []
+        section_sentence_attn: list[torch.Tensor] = []
 
         if section_spans.numel() == 0:
-            pooled_doc, _ = self.document_pool(sentence_nodes)
-            return sentence_nodes.new_zeros((0, sentence_nodes.shape[1])), pooled_doc
+            pooled_doc, doc_attn = self.document_pool(sentence_nodes)
+            pooled_doc, doc_mix = self._mix_attention_with_mean(
+                attention_vec=pooled_doc,
+                mean_vec=sentence_nodes.mean(dim=0),
+                mix_logit=self.document_attention_mix_logit,
+            )
+            return sentence_nodes.new_zeros((0, sentence_nodes.shape[1])), pooled_doc, {
+                "section_sentence_attn": [],
+                "document_section_attn": doc_attn,
+                "section_attention_mix": torch.sigmoid(self.section_attention_mix_logit).detach(),
+                "document_attention_mix": doc_mix.detach(),
+            }
 
         for start_end in section_spans.tolist():
             start, end = int(start_end[0]), int(start_end[1])
             chunk = sentence_nodes[start:end]
             if chunk.numel() == 0:
                 continue
-            pooled_sec, _ = self.section_pool(chunk)
+            pooled_sec, sent_attn = self.section_pool(chunk)
+            pooled_sec, _section_mix = self._mix_attention_with_mean(
+                attention_vec=pooled_sec,
+                mean_vec=chunk.mean(dim=0),
+                mix_logit=self.section_attention_mix_logit,
+            )
             section_vecs.append(pooled_sec)
+            section_sentence_attn.append(sent_attn)
 
         if not section_vecs:
-            pooled_doc, _ = self.document_pool(sentence_nodes)
-            return sentence_nodes.new_zeros((0, sentence_nodes.shape[1])), pooled_doc
+            pooled_doc, doc_attn = self.document_pool(sentence_nodes)
+            pooled_doc, doc_mix = self._mix_attention_with_mean(
+                attention_vec=pooled_doc,
+                mean_vec=sentence_nodes.mean(dim=0),
+                mix_logit=self.document_attention_mix_logit,
+            )
+            return sentence_nodes.new_zeros((0, sentence_nodes.shape[1])), pooled_doc, {
+                "section_sentence_attn": [],
+                "document_section_attn": doc_attn,
+                "section_attention_mix": torch.sigmoid(self.section_attention_mix_logit).detach(),
+                "document_attention_mix": doc_mix.detach(),
+            }
 
         section_tensor = torch.stack(section_vecs, dim=0)
-        pooled_doc, _ = self.document_pool(section_tensor)
-        return section_tensor, pooled_doc
+        pooled_doc, doc_attn = self.document_pool(section_tensor)
+        pooled_doc, doc_mix = self._mix_attention_with_mean(
+            attention_vec=pooled_doc,
+            mean_vec=section_tensor.mean(dim=0),
+            mix_logit=self.document_attention_mix_logit,
+        )
+        return section_tensor, pooled_doc, {
+            "section_sentence_attn": section_sentence_attn,
+            "document_section_attn": doc_attn,
+            "section_attention_mix": torch.sigmoid(self.section_attention_mix_logit).detach(),
+            "document_attention_mix": doc_mix.detach(),
+        }
 
 
 class DualTextFusion(nn.Module):
@@ -144,6 +199,7 @@ class HierTextBranch(nn.Module):
         dropout: float = 0.1,
         sentence_local_layers: int = 1,
         sentence_local_heads: int = 8,
+        readout_attention_init: float = -0.5,
     ):
         super().__init__()
         self.local_encoder = SentenceLocalEncoder(
@@ -152,13 +208,21 @@ class HierTextBranch(nn.Module):
             num_layers=sentence_local_layers,
             dropout=dropout,
         )
-        self.readout = HierarchicalReadout(dim=dim, hidden=hidden, dropout=dropout)
+        self.readout = HierarchicalReadout(
+            dim=dim,
+            hidden=hidden,
+            dropout=dropout,
+            attention_init=readout_attention_init,
+        )
 
     def forward(
         self,
         sentence_features: torch.Tensor,
         section_spans: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, dict]:
         sentence_nodes = self.local_encoder(sentence_features)
-        section_vecs, document_vec = self.readout(sentence_nodes=sentence_nodes, section_spans=section_spans)
-        return sentence_nodes, section_vecs, document_vec
+        section_vecs, document_vec, analysis = self.readout(
+            sentence_nodes=sentence_nodes,
+            section_spans=section_spans,
+        )
+        return sentence_nodes, section_vecs, document_vec, analysis

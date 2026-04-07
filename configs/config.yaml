@@ -120,6 +120,11 @@ loss:
   alpha_txt: 0.5
   beta_node: 0.1
   gamma_topo: 0.1
+  # dual_text 专用，可选 gate 正则。
+  # fusion_gate 是 sentence 分支权重，所以 graph 分支权重 = 1 - fusion_gate。
+  # 默认 0.0 表示关闭；做消融时可试 0.01 或 0.02，把 graph 分支目标权重推到 0.2 左右。
+  dual_text_gate_reg_weight: 0.0
+  dual_text_graph_weight_target: 0.2
   mmd_num_kernels: 3
   mmd_sigma_multipliers:
     - 0.5

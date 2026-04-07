@@ -76,6 +76,18 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--dataset_name", type=str, default="")
     ap.add_argument("--train_num_workers", type=int, default=0)
     ap.add_argument(
+        "--gate_reg_weight",
+        type=float,
+        default=None,
+        help="Optional dual_text gate regularization weight. If set, encourages graph branch participation.",
+    )
+    ap.add_argument(
+        "--graph_weight_target",
+        type=float,
+        default=None,
+        help="Optional target average graph branch weight for dual_text gate regularization.",
+    )
+    ap.add_argument(
         "--force_rerun",
         action="store_true",
         help="Ignore existing best_model.pt files and rerun those splits from scratch.",
@@ -127,6 +139,10 @@ def _build_cfg(base_cfg: Any, args: argparse.Namespace, split_idx: int, output_d
     cfg.data.sentence_text_dir = os.path.abspath(args.sentence_text_dir)
     cfg.data.graph_text_dir = os.path.abspath(args.graph_text_dir)
     cfg.data.text_use_graph_structure = False
+    if args.gate_reg_weight is not None:
+        cfg.loss.dual_text_gate_reg_weight = float(args.gate_reg_weight)
+    if args.graph_weight_target is not None:
+        cfg.loss.dual_text_graph_weight_target = float(args.graph_weight_target)
     cfg.train.num_workers = int(args.train_num_workers)
     cfg.output.exp_dir = os.path.abspath(output_dir)
     return cfg
@@ -134,7 +150,18 @@ def _build_cfg(base_cfg: Any, args: argparse.Namespace, split_idx: int, output_d
 
 def _write_results_csv(output_dir: str, rows: list[dict[str, Any]]) -> None:
     csv_path = os.path.join(output_dir, "comparison_results.csv")
-    fieldnames = ["split_idx", "acc", "auc", "best_path", "exp_dir", "status"]
+    fieldnames = [
+        "split_idx",
+        "acc",
+        "auc",
+        "best_path",
+        "exp_dir",
+        "status",
+        "fusion_gate_mean",
+        "graph_branch_weight_mean",
+        "doc_attention_entropy_mean",
+        "doc_attention_max_mean",
+    ]
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
@@ -144,6 +171,20 @@ def _write_results_csv(output_dir: str, rows: list[dict[str, Any]]) -> None:
 def _write_summary(output_dir: str, dataset_name: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
     accs = [float(row["acc"]) for row in rows]
     aucs = [float(row["auc"]) for row in rows]
+    gate_means = [float(row["fusion_gate_mean"]) for row in rows if row.get("fusion_gate_mean") is not None]
+    graph_branch_weight_means = [
+        float(row["graph_branch_weight_mean"]) for row in rows if row.get("graph_branch_weight_mean") is not None
+    ]
+    doc_attn_entropy_means = [
+        float(row["doc_attention_entropy_mean"])
+        for row in rows
+        if row.get("doc_attention_entropy_mean") is not None
+    ]
+    doc_attn_max_means = [
+        float(row["doc_attention_max_mean"])
+        for row in rows
+        if row.get("doc_attention_max_mean") is not None
+    ]
     summary = {
         "dataset": dataset_name,
         "num_splits": len(rows),
@@ -152,6 +193,15 @@ def _write_summary(output_dir: str, dataset_name: str, rows: list[dict[str, Any]
         "acc_std": _safe_std(accs),
         "auc_mean": _safe_mean(aucs),
         "auc_std": _safe_std(aucs),
+        "analysis": {
+            "fusion_gate_mean": _safe_mean(gate_means),
+            "fusion_gate_std": _safe_std(gate_means),
+            "fusion_gate_is_sentence_branch_weight": True,
+            "graph_branch_weight_mean": _safe_mean(graph_branch_weight_means),
+            "graph_branch_weight_std": _safe_std(graph_branch_weight_means),
+            "doc_attention_entropy_mean": _safe_mean(doc_attn_entropy_means),
+            "doc_attention_max_mean": _safe_mean(doc_attn_max_means),
+        },
     }
     summary_path = os.path.join(output_dir, "comparison_summary.json")
     with open(summary_path, "w", encoding="utf-8") as f:
@@ -166,12 +216,32 @@ def _train_or_resume(cfg: Any, force_rerun: bool) -> tuple[dict[str, float], str
     if not force_rerun and os.path.exists(best_ckpt):
         metrics = _load_final_metrics(cfg.output.exp_dir)
         if metrics is None:
-            metrics = load_and_eval(cfg, best_ckpt)["target"]
-        return {"acc": float(metrics["acc"]), "auc": float(metrics["auc"])}, "reused"
+            payload = load_and_eval(cfg, best_ckpt)
+            metrics = payload["target"]
+            analysis = payload.get("analysis", {})
+        else:
+            analysis_path = os.path.join(cfg.output.exp_dir, "analysis.json")
+            analysis = {}
+            if os.path.exists(analysis_path):
+                with open(analysis_path, "r", encoding="utf-8") as f:
+                    analysis = json.load(f)
+        return {
+            "acc": float(metrics["acc"]),
+            "auc": float(metrics["auc"]),
+            "analysis": analysis,
+        }, "reused"
 
     best_path = train_one_split(cfg)
-    metrics = load_and_eval(cfg, best_path)["target"]
-    return {"acc": float(metrics["acc"]), "auc": float(metrics["auc"])}, "trained"
+    payload = load_and_eval(cfg, best_path)
+    metrics = payload["target"]
+    analysis = payload.get("analysis", {})
+    with open(os.path.join(cfg.output.exp_dir, "analysis.json"), "w", encoding="utf-8") as f:
+        json.dump(analysis, f, indent=2)
+    return {
+        "acc": float(metrics["acc"]),
+        "auc": float(metrics["auc"]),
+        "analysis": analysis,
+    }, "trained"
 
 
 def main() -> None:
@@ -192,6 +262,8 @@ def main() -> None:
         "sentence_text_dir": os.path.abspath(args.sentence_text_dir),
         "graph_text_dir": os.path.abspath(args.graph_text_dir),
         "output_dir": os.path.abspath(args.output_dir),
+        "gate_reg_weight": args.gate_reg_weight,
+        "graph_weight_target": args.graph_weight_target,
         "force_rerun": bool(args.force_rerun),
     }
     with open(os.path.join(args.output_dir, "comparison_plan.json"), "w", encoding="utf-8") as f:
@@ -216,6 +288,10 @@ def main() -> None:
             "best_path": os.path.join(exp_dir, "best_model.pt"),
             "exp_dir": exp_dir,
             "status": status,
+            "fusion_gate_mean": metrics.get("analysis", {}).get("fusion_gate_mean"),
+            "graph_branch_weight_mean": metrics.get("analysis", {}).get("graph_branch_weight_mean"),
+            "doc_attention_entropy_mean": metrics.get("analysis", {}).get("doc_attention_entropy_mean"),
+            "doc_attention_max_mean": metrics.get("analysis", {}).get("doc_attention_max_mean"),
         }
         rows.append(row)
 

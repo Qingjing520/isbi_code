@@ -1,0 +1,18 @@
+{
+  "dataset": "KIRC",
+  "num_splits": 10,
+  "mode": "dual_text",
+  "acc_mean": 0.7841726660728454,
+  "acc_std": 0.019184648990637276,
+  "auc_mean": 0.8635366388767003,
+  "auc_std": 0.027194296502582132,
+  "analysis": {
+    "fusion_gate_mean": 0.8546645716181118,
+    "fusion_gate_std": 0.1576651781295975,
+    "fusion_gate_is_sentence_branch_weight": true,
+    "graph_branch_weight_mean": 0.14533542838188812,
+    "graph_branch_weight_std": 0.1576651781295975,
+    "doc_attention_entropy_mean": 0.7292155546883352,
+    "doc_attention_max_mean": 0.5608518816048292
+  }
+}

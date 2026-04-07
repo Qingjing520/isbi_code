@@ -148,6 +148,9 @@ class MultiModalFeatureDataset(Dataset):
             text_feat = {
                 "sentence_pt": sentence_feat,
                 "hierarchy_graph": graph_payload,
+                "sentence_path": text_ref["sentence_path"],
+                "graph_path": text_ref["graph_path"],
+                "graph_json_path": os.path.splitext(text_ref["graph_path"])[0] + ".json",
             }
         else:
             text_path = str(text_ref)

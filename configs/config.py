@@ -57,6 +57,7 @@ class ModelConfig:
     sentence_local_heads: int = 8
     hier_readout_hidden: int = 256
     hier_readout_dropout: float = 0.10
+    hier_readout_attention_init: float = -0.5
     text_dual_fusion_dropout: float = 0.10
 
 
@@ -65,6 +66,8 @@ class LossConfig:
     alpha_txt: float = 0.5
     beta_node: float = 0.1
     gamma_topo: float = 0.1
+    dual_text_gate_reg_weight: float = 0.0
+    dual_text_graph_weight_target: float = 0.2
 
     mmd_num_kernels: int = 3
     mmd_sigma_multipliers: List[float] = None
@@ -169,12 +172,15 @@ def get_config(path: str) -> Config:
             sentence_local_heads=int(model.get("sentence_local_heads", 8)),
             hier_readout_hidden=int(model.get("hier_readout_hidden", 256)),
             hier_readout_dropout=float(model.get("hier_readout_dropout", 0.10)),
+            hier_readout_attention_init=float(model.get("hier_readout_attention_init", -0.5)),
             text_dual_fusion_dropout=float(model.get("text_dual_fusion_dropout", 0.10)),
         ),
         loss=LossConfig(
             alpha_txt=float(loss.get("alpha_txt", 0.5)),
             beta_node=float(loss.get("beta_node", 0.1)),
             gamma_topo=float(loss.get("gamma_topo", 0.1)),
+            dual_text_gate_reg_weight=float(loss.get("dual_text_gate_reg_weight", 0.0)),
+            dual_text_graph_weight_target=float(loss.get("dual_text_graph_weight_target", 0.2)),
             mmd_num_kernels=int(loss.get("mmd_num_kernels", 3)),
             mmd_sigma_multipliers=loss.get("mmd_sigma_multipliers", [0.5, 1.0, 2.0]),
             mmd_unbiased=bool(loss.get("mmd_unbiased", True)),
