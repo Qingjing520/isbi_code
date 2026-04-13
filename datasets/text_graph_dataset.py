@@ -38,13 +38,16 @@ def _read_manifest_rows(manifest_csv: str | Path) -> list[dict[str, Any]]:
                 "report_id": (row.get("report_id") or "").strip(),
                 "file_name": (row.get("file_name") or "").strip(),
                 "filter_mode": (row.get("filter_mode") or "").strip(),
+                "source_concept_json": (row.get("source_concept_json") or "").strip(),
+                "concept_count": int(row.get("concept_count") or 0),
+                "has_concept_level": (row.get("has_concept_level") or "").strip().lower() in {"1", "true", "yes"},
             }
         )
     return normalized
 
 
 class TextGraphDataset(Dataset):
-    """Dataset for Document -> Section -> Sentence graph tensors."""
+    """Dataset for hierarchy or concept-enhanced text graph tensors."""
 
     def __init__(
         self,
@@ -82,6 +85,9 @@ class TextGraphDataset(Dataset):
             "report_id": sample["report_id"],
             "file_name": sample["file_name"],
             "filter_mode": sample["filter_mode"],
+            "source_concept_json": sample["source_concept_json"],
+            "concept_count": sample["concept_count"],
+            "has_concept_level": sample["has_concept_level"],
         }
         return graph, label, meta
 

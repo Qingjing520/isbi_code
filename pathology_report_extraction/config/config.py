@@ -12,6 +12,7 @@ except Exception:
 PIPELINE_STAGE_NAMES = {
     "preprocess",
     "export_sentence_views",
+    "extract_ontology_concepts",
     "encode_sentence_exports_conch",
     "build_text_hierarchy_graphs",
     "prepare_text_graph_manifest",

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""Prepare a training manifest from text hierarchy graph outputs.
+"""Prepare a training manifest from text graph outputs.
 
 This script matches case-level text graphs to slide-level labels and writes
 one row per (slide_id, text_graph) sample. It is intended as the bridge
@@ -15,7 +15,6 @@ from pathlib import Path
 from typing import Any
 
 from config.config import get_path, get_stage_config, get_value, load_yaml_config
-from pdf_utils import ensure_dir, write_json
 
 
 DEFAULT_OUTPUT_ROOT = Path(r"D:\Tasks\isbi_code\pathology_report_extraction\Output")
@@ -24,6 +23,15 @@ DEFAULT_LABEL_CSV = Path(r"D:\Tasks\pathologic_stage.csv")
 DEFAULT_SPLIT_CSV: Path | None = None
 DEFAULT_MANIFEST_DIR = DEFAULT_OUTPUT_ROOT / "manifests"
 DEFAULT_MANIFEST_OUTPUT_SUBDIR = "manifests"
+
+
+def ensure_dir(path: Path) -> None:
+    Path(path).mkdir(parents=True, exist_ok=True)
+
+
+def write_json(path: Path, payload: dict[str, Any]) -> None:
+    ensure_dir(path.parent)
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -110,12 +118,15 @@ def load_graph_records(graph_dir: Path) -> tuple[list[dict[str, Any]], list[str]
                 "source_preprocessed_json": payload.get("source_preprocessed_json"),
                 "source_sentence_view_json": payload.get("source_sentence_view_json"),
                 "source_embedding_pt": payload.get("embedding_path"),
+                "source_concept_json": payload.get("source_concept_json") or "",
                 "graph_json": str(graph_json_path),
                 "graph_pt": str(graph_pt_path),
                 "node_count": int(payload.get("node_count", 0)),
                 "edge_count": int(payload.get("edge_count", 0)),
                 "section_count": int(node_counts.get("section", 0)),
                 "sentence_count": int(node_counts.get("sentence", 0)),
+                "concept_count": int(node_counts.get("concept", 0)),
+                "has_concept_level": bool(isinstance(payload.get("node_type_mapping"), dict) and "concept" in payload.get("node_type_mapping", {})),
             }
         )
 
@@ -154,6 +165,9 @@ def derive_default_output_csv(graph_dir: Path, output_dir: Path) -> Path:
     if stem.startswith("text_hierarchy_graphs_"):
         suffix = stem.replace("text_hierarchy_graphs_", "", 1)
         return output_dir / f"text_graph_manifest_{suffix}.csv"
+    if stem.startswith("text_concept_graphs_"):
+        suffix = stem.replace("text_concept_graphs_", "", 1)
+        return output_dir / f"text_graph_manifest_{suffix}.csv"
     return output_dir / f"{stem}_manifest.csv"
 
 
@@ -171,6 +185,7 @@ def write_manifest_csv(rows: list[dict[str, Any]], output_csv: Path) -> None:
         "graph_pt",
         "graph_json",
         "source_embedding_pt",
+        "source_concept_json",
         "source_sentence_view_json",
         "source_preprocessed_json",
         "source_pdf",
@@ -178,6 +193,8 @@ def write_manifest_csv(rows: list[dict[str, Any]], output_csv: Path) -> None:
         "edge_count",
         "section_count",
         "sentence_count",
+        "concept_count",
+        "has_concept_level",
         "image_pt",
         "image_exists",
     ]
@@ -243,6 +260,7 @@ def prepare_manifest(
                 "graph_pt": graph_record["graph_pt"],
                 "graph_json": graph_record["graph_json"],
                 "source_embedding_pt": graph_record.get("source_embedding_pt") or "",
+                "source_concept_json": graph_record.get("source_concept_json") or "",
                 "source_sentence_view_json": graph_record.get("source_sentence_view_json") or "",
                 "source_preprocessed_json": graph_record.get("source_preprocessed_json") or "",
                 "source_pdf": graph_record.get("source_pdf") or "",
@@ -250,6 +268,8 @@ def prepare_manifest(
                 "edge_count": graph_record["edge_count"],
                 "section_count": graph_record["section_count"],
                 "sentence_count": graph_record["sentence_count"],
+                "concept_count": graph_record["concept_count"],
+                "has_concept_level": graph_record["has_concept_level"],
                 "image_pt": "",
                 "image_exists": "",
             }
@@ -269,6 +289,9 @@ def prepare_manifest(
     split_counts = Counter(row["split"] or "unspecified" for row in manifest_rows)
     label_counts = Counter(str(row["label"]) for row in manifest_rows)
     image_exists_count = sum(1 for row in manifest_rows if row.get("image_exists") is True)
+    rows_with_concepts = sum(1 for row in manifest_rows if int(row.get("concept_count", 0)) > 0)
+    rows_with_concept_level = sum(1 for row in manifest_rows if str(row.get("has_concept_level", "")).lower() in {"true", "1"})
+    total_concept_nodes = sum(int(row.get("concept_count", 0)) for row in manifest_rows)
 
     summary = {
         "graph_dir": str(graph_root),
@@ -290,6 +313,9 @@ def prepare_manifest(
         "splits": dict(split_counts),
         "labels": dict(label_counts),
         "image_exists_count": image_exists_count,
+        "rows_with_concept_level": rows_with_concept_level,
+        "rows_with_concepts": rows_with_concepts,
+        "total_concept_nodes": total_concept_nodes,
     }
     if summary["matched_rows"] == 0:
         summary["warning"] = (

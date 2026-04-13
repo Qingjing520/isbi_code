@@ -60,7 +60,7 @@ class MultiModalFeatureDataset(Dataset):
         self.sentence_text_dir = sentence_text_dir or text_dir
         self.graph_text_dir = graph_text_dir or text_dir
 
-        valid_text_modes = {"sentence_pt", "hierarchy_graph", "dual_text"}
+        valid_text_modes = {"sentence_pt", "hierarchy_graph", "dual_text", "concept_graph"}
         if self.text_mode not in valid_text_modes:
             raise ValueError(f"text_mode must be one of {sorted(valid_text_modes)}. Got: {self.text_mode}")
 
@@ -159,7 +159,7 @@ class MultiModalFeatureDataset(Dataset):
                 text_feat = text_payload    # [N, 512]
             else:
                 if not isinstance(text_payload, dict):
-                    raise TypeError(f"Expected a dict graph payload for hierarchy_graph mode: {text_path}")
+                    raise TypeError(f"Expected a dict graph payload for {self.text_mode} mode: {text_path}")
                 if self.text_use_graph_structure:
                     text_feat = text_payload
                 else:

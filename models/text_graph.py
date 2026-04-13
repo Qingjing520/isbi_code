@@ -66,8 +66,8 @@ class TextHierarchyGraphEncoder(nn.Module):
     ):
         super().__init__()
         self.use_next_edges = bool(use_next_edges)
-        self.allowed_forward_relations = tuple(range(num_base_relations)) if self.use_next_edges else (0,)
-        self.num_base_relations = len(self.allowed_forward_relations)
+        self.default_allowed_forward_relations = tuple(range(num_base_relations)) if self.use_next_edges else (0,)
+        self.num_base_relations = int(num_base_relations)
         self.num_total_relations = self.num_base_relations * 2  # forward + reverse
         self.node_type_embed = nn.Embedding(num_node_types, dim)
         self.input_norm = nn.LayerNorm(dim)
@@ -81,18 +81,24 @@ class TextHierarchyGraphEncoder(nn.Module):
         # Favor the document node while still letting other nodes contribute.
         self.doc_mix_logit = nn.Parameter(torch.tensor(1.0))
 
-    def _augment_edges(self, edge_index: torch.Tensor, edge_type: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def _augment_edges(
+        self,
+        edge_index: torch.Tensor,
+        edge_type: torch.Tensor,
+        allowed_forward_relation_ids: list[int] | tuple[int, ...] | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        relation_ids = (
+            tuple(int(x) for x in allowed_forward_relation_ids)
+            if allowed_forward_relation_ids is not None
+            else self.default_allowed_forward_relations
+        )
         allowed = torch.zeros_like(edge_type, dtype=torch.bool)
-        for rel_id in self.allowed_forward_relations:
+        for rel_id in relation_ids:
             allowed |= edge_type == rel_id
         edge_index = edge_index[:, allowed]
         edge_type = edge_type[allowed]
         if edge_type.numel() == 0:
             raise RuntimeError("No graph edges remain after relation filtering.")
-
-        if not self.use_next_edges:
-            # Remap surviving parent edges to contiguous relation ids.
-            edge_type = torch.zeros_like(edge_type)
 
         src, dst = edge_index
         reverse_edge_index = torch.stack([dst, src], dim=0)
@@ -107,10 +113,15 @@ class TextHierarchyGraphEncoder(nn.Module):
         edge_index: torch.Tensor,
         edge_type: torch.Tensor,
         node_type: torch.Tensor,
+        allowed_forward_relation_ids: list[int] | tuple[int, ...] | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         base = self.input_norm(node_features + self.node_type_embed(node_type))
         x = base
-        edge_index_full, edge_type_full = self._augment_edges(edge_index, edge_type)
+        edge_index_full, edge_type_full = self._augment_edges(
+            edge_index,
+            edge_type,
+            allowed_forward_relation_ids=allowed_forward_relation_ids,
+        )
         for layer in self.layers:
             x = layer(x, edge_index_full, edge_type_full)
         x = self.output_norm(x)

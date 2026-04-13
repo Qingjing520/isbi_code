@@ -6,15 +6,17 @@ The active processing order is:
 
 1. PDF preprocessing into `Document -> Section -> Sentence`
 2. Sentence-view export
-3. CONCH sentence encoding
-4. `Document -> Section -> Sentence` hierarchy graph building
-5. Optional text-graph manifest preparation for training
+3. Optional ontology concept extraction
+4. CONCH sentence encoding
+5. `Document -> Section -> Sentence` hierarchy graph building
+6. Optional text-graph manifest preparation for training
 
 Core scripts:
 
 - [run_pipeline.py](D:\Tasks\isbi_code\pathology_report_extraction\run_pipeline.py)
 - [preprocess_pathology_reports.py](D:\Tasks\isbi_code\pathology_report_extraction\preprocess_pathology_reports.py)
 - [export_sentence_views.py](D:\Tasks\isbi_code\pathology_report_extraction\export_sentence_views.py)
+- [extract_ontology_concepts.py](D:\Tasks\isbi_code\pathology_report_extraction\extract_ontology_concepts.py)
 - [encode_sentence_exports_conch.py](D:\Tasks\isbi_code\pathology_report_extraction\encode_sentence_exports_conch.py)
 - [build_text_hierarchy_graphs.py](D:\Tasks\isbi_code\pathology_report_extraction\build_text_hierarchy_graphs.py)
 - [prepare_text_graph_manifest.py](D:\Tasks\isbi_code\pathology_report_extraction\prepare_text_graph_manifest.py)
@@ -91,9 +93,10 @@ The YAML is ordered by processing sequence:
 1. `defaults`
 2. `preprocess`
 3. `export_sentence_views`
-4. `encode_sentence_exports_conch`
-5. `build_text_hierarchy_graphs`
-6. `prepare_text_graph_manifest`
+4. `extract_ontology_concepts`
+5. `encode_sentence_exports_conch`
+6. `build_text_hierarchy_graphs`
+7. `prepare_text_graph_manifest`
 
 Each stage has:
 
@@ -130,6 +133,12 @@ Sentence export only:
 D:\ProgrammeFiles\Anaconda\envs\Pytorch\python.exe D:\Tasks\isbi_code\pathology_report_extraction\export_sentence_views.py --config "D:\Tasks\isbi_code\pathology_report_extraction\config\pipeline.yaml"
 ```
 
+Concept extraction only:
+
+```powershell
+D:\ProgrammeFiles\Anaconda\envs\Pytorch\python.exe D:\Tasks\isbi_code\pathology_report_extraction\extract_ontology_concepts.py --config "D:\Tasks\isbi_code\pathology_report_extraction\config\pipeline.yaml"
+```
+
 CONCH encoding only:
 
 ```powershell
@@ -164,6 +173,11 @@ D:\Tasks\isbi_code\pathology_report_extraction\Output
 |   |-- export.log
 |   |-- BRCA\*.json / *.txt
 |   |-- KIRC\*.json / *.txt
+|-- concept_annotations_masked
+|   |-- run_summary.json
+|   |-- concepts.log
+|   |-- BRCA\*.json
+|   |-- KIRC\*.json
 |-- sentence_embeddings_conch_masked
 |   |-- run_summary.json
 |   |-- encode.log
@@ -199,8 +213,12 @@ For one report sample:
 - `Output\sentence_embeddings_conch_<mode>\<report>.json`
   - metadata for the same `.pt`
   - maps embedding rows back to sentences and sections
+- `Output\concept_annotations_<mode>\<report>.json`
+  - lightweight ontology / concept annotations aligned to the sentence view
+  - keeps direct mentions, true-path-expanded concepts, and concept-concept ontology links
 - `Output\text_hierarchy_graphs_<mode>\<report>.pt`
   - graph tensors for training
+  - can remain plain hierarchy graphs, or become concept-enhanced graphs when `attach_concepts: true`
 - `Output\text_hierarchy_graphs_<mode>\<report>.json`
   - readable node and edge metadata
 

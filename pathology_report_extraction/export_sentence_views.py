@@ -18,7 +18,6 @@ import logging
 from pathlib import Path
 
 from config.config import get_bool, get_path, get_stage_config, get_value, load_yaml_config
-from pdf_utils import ensure_dir, write_json, write_text
 
 
 LOGGER = logging.getLogger("export_sentence_views")
@@ -38,6 +37,20 @@ DEFAULT_SENTENCE_EXPORT_OUTPUT_SUBDIRS = {
     "no_diagnosis_masked": "sentence_exports_no_diagnosis_masked",
     "full": "sentence_exports_full",
 }
+
+
+def ensure_dir(path: Path) -> None:
+    Path(path).mkdir(parents=True, exist_ok=True)
+
+
+def write_json(path: Path, payload: dict) -> None:
+    ensure_dir(path.parent)
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def write_text(path: Path, text: str) -> None:
+    ensure_dir(path.parent)
+    path.write_text(text, encoding="utf-8")
 
 
 def iter_document_jsons(input_dir: Path) -> list[Path]:

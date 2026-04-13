@@ -6,15 +6,17 @@
 
 1. PDF 预处理为 `Document -> Section -> Sentence`
 2. 导出句子视图
-3. 用 CONCH 做句子编码
-4. 构建 `Document -> Section -> Sentence` 三层文本图
-5. 可选：整理训练用文本图 manifest
+3. 可选：抽取 ontology / concept annotation
+4. 用 CONCH 做句子编码
+5. 构建 `Document -> Section -> Sentence` 三层文本图
+6. 可选：整理训练用文本图 manifest
 
 核心脚本：
 
 - [run_pipeline.py](D:\Tasks\isbi_code\pathology_report_extraction\run_pipeline.py)
 - [preprocess_pathology_reports.py](D:\Tasks\isbi_code\pathology_report_extraction\preprocess_pathology_reports.py)
 - [export_sentence_views.py](D:\Tasks\isbi_code\pathology_report_extraction\export_sentence_views.py)
+- [extract_ontology_concepts.py](D:\Tasks\isbi_code\pathology_report_extraction\extract_ontology_concepts.py)
 - [encode_sentence_exports_conch.py](D:\Tasks\isbi_code\pathology_report_extraction\encode_sentence_exports_conch.py)
 - [build_text_hierarchy_graphs.py](D:\Tasks\isbi_code\pathology_report_extraction\build_text_hierarchy_graphs.py)
 - [prepare_text_graph_manifest.py](D:\Tasks\isbi_code\pathology_report_extraction\prepare_text_graph_manifest.py)
@@ -56,7 +58,7 @@ D:\ProgrammeFiles\Anaconda\envs\Pytorch\python.exe -m pip install -r D:\Tasks\is
 
 ## 推荐的一键运行方式
 
-完整跑通 4 个阶段，直接执行：
+完整跑通整条流程，直接执行：
 
 ```powershell
 D:\ProgrammeFiles\Anaconda\envs\Pytorch\python.exe D:\Tasks\isbi_code\pathology_report_extraction\run_pipeline.py --config "D:\Tasks\isbi_code\pathology_report_extraction\config\pipeline.yaml"
@@ -91,9 +93,10 @@ D:\ProgrammeFiles\Anaconda\envs\Pytorch\python.exe D:\Tasks\isbi_code\pathology_
 1. `defaults`
 2. `preprocess`
 3. `export_sentence_views`
-4. `encode_sentence_exports_conch`
-5. `build_text_hierarchy_graphs`
-6. `prepare_text_graph_manifest`
+4. `extract_ontology_concepts`
+5. `encode_sentence_exports_conch`
+6. `build_text_hierarchy_graphs`
+7. `prepare_text_graph_manifest`
 
 每个阶段都支持：
 
@@ -118,7 +121,7 @@ D:\ProgrammeFiles\Anaconda\envs\Pytorch\python.exe D:\Tasks\isbi_code\pathology_
 
 ## 单独运行某一步
 
-4 个脚本仍然支持 `--config`，并且可以直接读取同一个 [pipeline.yaml](D:\Tasks\isbi_code\pathology_report_extraction\config\pipeline.yaml)。
+这些脚本仍然支持 `--config`，并且可以直接读取同一个 [pipeline.yaml](D:\Tasks\isbi_code\pathology_report_extraction\config\pipeline.yaml)。
 
 只跑预处理：
 
@@ -130,6 +133,12 @@ D:\ProgrammeFiles\Anaconda\envs\Pytorch\python.exe D:\Tasks\isbi_code\pathology_
 
 ```powershell
 D:\ProgrammeFiles\Anaconda\envs\Pytorch\python.exe D:\Tasks\isbi_code\pathology_report_extraction\export_sentence_views.py --config "D:\Tasks\isbi_code\pathology_report_extraction\config\pipeline.yaml"
+```
+
+只跑 concept annotation 抽取：
+
+```powershell
+D:\ProgrammeFiles\Anaconda\envs\Pytorch\python.exe D:\Tasks\isbi_code\pathology_report_extraction\extract_ontology_concepts.py --config "D:\Tasks\isbi_code\pathology_report_extraction\config\pipeline.yaml"
 ```
 
 只跑 CONCH 编码：
@@ -166,6 +175,11 @@ D:\Tasks\isbi_code\pathology_report_extraction\Output
 |   |-- export.log
 |   |-- BRCA\*.json / *.txt
 |   |-- KIRC\*.json / *.txt
+|-- concept_annotations_masked
+|   |-- run_summary.json
+|   |-- concepts.log
+|   |-- BRCA\*.json
+|   |-- KIRC\*.json
 |-- sentence_embeddings_conch_masked
 |   |-- run_summary.json
 |   |-- encode.log
@@ -201,8 +215,12 @@ D:\Tasks\isbi_code\pathology_report_extraction\Output
 - `Output\sentence_embeddings_conch_<mode>\<report>.json`
   - 上面同名 `.pt` 的结构说明
   - 用于把第 `i` 行特征映射回句子和 section
+- `Output\concept_annotations_<mode>\<report>.json`
+  - 轻量 ontology / concept 标注结果
+  - 包含 direct mention、true-path 扩展概念和 concept-concept ontology 边
 - `Output\text_hierarchy_graphs_<mode>\<report>.pt`
   - 训练用图张量
+  - `attach_concepts: true` 时会升级成 concept-enhanced graph
 - `Output\text_hierarchy_graphs_<mode>\<report>.json`
   - 可读的节点和边说明
 

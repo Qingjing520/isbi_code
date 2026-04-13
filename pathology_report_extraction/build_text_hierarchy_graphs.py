@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""Build simple Document -> Section -> Sentence hierarchy graphs.
+"""Build Document -> Section -> Sentence hierarchy graphs with optional concept nodes.
 
 Dependencies:
     pip install torch
@@ -13,12 +13,15 @@ Output:
     One .pt file per document with graph tensors and one companion .json file
     with human-readable node/edge metadata.
 
-Graph design in this first version:
-    - Node levels: Document, Section, Sentence
-    - Edge types: parent, next
+Graph design:
+    - Base node levels: Document, Section, Sentence
+    - Optional concept level: Concept
+    - Base edge types: parent, next
+    - Optional concept edge types: mention, ontology, same_sentence, same_section
     - Sentence features: original CONCH embeddings
     - Section features: mean pooling over child sentences
     - Document feature: mean pooling over section features
+    - Concept features: mean pooling over linked sentence embeddings
 """
 
 import argparse
@@ -29,8 +32,7 @@ from pathlib import Path
 
 import torch
 
-from config.config import get_path, get_stage_config, get_value, load_yaml_config
-from pdf_utils import ensure_dir, write_json
+from config.config import get_bool, get_path, get_stage_config, get_value, load_yaml_config
 
 
 LOGGER = logging.getLogger("build_text_hierarchy_graphs")
@@ -50,10 +52,31 @@ DEFAULT_GRAPH_OUTPUT_SUBDIRS = {
     "no_diagnosis_masked": "text_hierarchy_graphs_no_diagnosis_masked",
     "full": "text_hierarchy_graphs_full",
 }
+DEFAULT_CONCEPT_GRAPH_OUTPUT_SUBDIRS = {
+    "masked": "text_concept_graphs_masked",
+    "no_diagnosis": "text_concept_graphs_no_diagnosis",
+    "no_diagnosis_masked": "text_concept_graphs_no_diagnosis_masked",
+    "full": "text_concept_graphs_full",
+}
+DEFAULT_CONCEPT_OUTPUT_SUBDIRS = {
+    "masked": "concept_annotations_masked",
+    "no_diagnosis": "concept_annotations_no_diagnosis",
+    "no_diagnosis_masked": "concept_annotations_no_diagnosis_masked",
+    "full": "concept_annotations_full",
+}
 FEATURE_DIM = 512
 
 NODE_TYPE_TO_ID = {"document": 0, "section": 1, "sentence": 2}
 EDGE_TYPE_TO_ID = {"parent": 0, "next": 1}
+CONCEPT_NODE_TYPE_TO_ID = {"document": 0, "section": 1, "sentence": 2, "concept": 3}
+CONCEPT_EDGE_TYPE_TO_ID = {
+    "parent": 0,
+    "next": 1,
+    "mention": 2,
+    "ontology": 3,
+    "same_sentence": 4,
+    "same_section": 5,
+}
 
 CANONICAL_SECTION_TITLES = {
     "document body": "Document Body",
@@ -73,6 +96,15 @@ CANONICAL_SECTION_TITLES = {
 }
 
 
+def ensure_dir(path: Path) -> None:
+    Path(path).mkdir(parents=True, exist_ok=True)
+
+
+def write_json(path: Path, payload: dict) -> None:
+    ensure_dir(path.parent)
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
 def iter_metadata_jsons(input_dir: Path) -> list[Path]:
     return sorted(
         path
@@ -83,6 +115,25 @@ def iter_metadata_jsons(input_dir: Path) -> list[Path]:
 
 def load_json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def load_optional_concept_annotation(
+    metadata_json_path: Path,
+    input_root: Path,
+    concept_dir: Path | None,
+) -> tuple[dict | None, str | None]:
+    if concept_dir is None:
+        return None, None
+
+    annotation_root = Path(concept_dir)
+    if not annotation_root.exists():
+        return None, None
+
+    relative_path = metadata_json_path.relative_to(input_root)
+    concept_json_path = annotation_root / relative_path
+    if not concept_json_path.exists():
+        return None, str(concept_json_path)
+    return load_json(concept_json_path), str(concept_json_path)
 
 
 def normalize_section_title(raw_title: str) -> str:
@@ -298,11 +349,72 @@ def build_document_feature(section_features: torch.Tensor, sentence_features: to
         return mean_pool(section_features).float()
     return mean_pool(sentence_features).float()
 
+def build_concept_features(
+    concept_annotation: dict | None,
+    sentence_features: torch.Tensor,
+) -> tuple[torch.Tensor, list[str], torch.Tensor, torch.Tensor, torch.Tensor, list[list[int]]]:
+    if not concept_annotation:
+        return (
+            torch.empty((0, FEATURE_DIM), dtype=torch.float32),
+            [],
+            torch.empty((0,), dtype=torch.float32),
+            torch.empty((0,), dtype=torch.float32),
+            torch.empty((0,), dtype=torch.float32),
+            [],
+        )
 
-def build_nodes(payload: dict) -> tuple[list[dict], list[int], list[int]]:
+    concept_features: list[torch.Tensor] = []
+    concept_ids: list[str] = []
+    concept_ic: list[float] = []
+    concept_depth: list[float] = []
+    concept_direct_mentions: list[float] = []
+    concept_sentence_links: list[list[int]] = []
+
+    for concept in concept_annotation.get("concepts", []) or []:
+        sentence_indices = sorted(
+            {
+                int(index)
+                for index in concept.get("sentence_indices", []) or []
+                if 0 <= int(index) < int(sentence_features.shape[0])
+            }
+        )
+        if sentence_indices:
+            concept_feature = mean_pool(sentence_features[sentence_indices])
+        else:
+            concept_feature = mean_pool(sentence_features)
+
+        concept_features.append(concept_feature.float())
+        concept_ids.append(str(concept.get("concept_id", "")))
+        concept_ic.append(float(concept.get("ic", 0.0)))
+        concept_depth.append(float(concept.get("depth", 0.0)))
+        concept_direct_mentions.append(float(concept.get("direct_mention_count", 0.0)))
+        concept_sentence_links.append(sentence_indices)
+
+    if not concept_features:
+        return (
+            torch.empty((0, FEATURE_DIM), dtype=torch.float32),
+            [],
+            torch.empty((0,), dtype=torch.float32),
+            torch.empty((0,), dtype=torch.float32),
+            torch.empty((0,), dtype=torch.float32),
+            [],
+        )
+
+    return (
+        torch.stack(concept_features, dim=0).float(),
+        concept_ids,
+        torch.tensor(concept_ic, dtype=torch.float32),
+        torch.tensor(concept_depth, dtype=torch.float32),
+        torch.tensor(concept_direct_mentions, dtype=torch.float32),
+        concept_sentence_links,
+    )
+
+
+def build_nodes(payload: dict, concept_annotation: dict | None = None) -> tuple[list[dict], list[int], list[int], dict[str, int]]:
     nodes: list[dict] = []
     section_node_indices: list[int] = []
     sentence_node_indices: list[int] = []
+    concept_node_indices: dict[str, int] = {}
 
     nodes.append(
         {
@@ -350,15 +462,40 @@ def build_nodes(payload: dict) -> tuple[list[dict], list[int], list[int]]:
             }
         )
 
-    return nodes, section_node_indices, sentence_node_indices
+    for concept in concept_annotation.get("concepts", []) if concept_annotation else []:
+        node_index = len(nodes)
+        concept_id = str(concept.get("concept_id", ""))
+        concept_node_indices[concept_id] = node_index
+        nodes.append(
+            {
+                "node_index": node_index,
+                "node_id": f"concept_{concept_id}",
+                "node_type": "concept",
+                "level": 3,
+                "concept_id": concept_id,
+                "concept_name": str(concept.get("concept_name", concept_id)),
+                "depth": int(concept.get("depth", 0)),
+                "ic": float(concept.get("ic", 0.0)),
+                "direct_mention_count": int(concept.get("direct_mention_count", 0)),
+                "is_direct": bool(concept.get("is_direct", False)),
+                "is_ancestor_only": bool(concept.get("is_ancestor_only", False)),
+                "sentence_indices": list(concept.get("sentence_indices", []) or []),
+            }
+        )
+
+    return nodes, section_node_indices, sentence_node_indices, concept_node_indices
 
 
 def build_edges(
     payload: dict,
     section_node_indices: list[int],
     sentence_node_indices: list[int],
+    concept_node_indices: dict[str, int] | None = None,
+    concept_annotation: dict | None = None,
+    add_concept_cooccurrence_edges: bool = True,
 ) -> list[dict]:
     edges: list[dict] = []
+    concept_node_indices = concept_node_indices or {}
 
     # Parent edges: document -> section
     for section_index, section_node_index in enumerate(section_node_indices):
@@ -414,10 +551,124 @@ def build_edges(
             }
         )
 
+    if concept_annotation and concept_node_indices:
+        mention_edge_keys: set[tuple[int, int, str]] = set()
+        sentence_to_concepts: dict[int, set[str]] = {}
+        section_to_concepts: dict[int, set[str]] = {}
+
+        for mention in concept_annotation.get("mentions", []) or []:
+            concept_id = str(mention.get("concept_id", ""))
+            sentence_index = int(mention.get("sentence_index", -1))
+            section_index = int(mention.get("section_index", -1))
+            if concept_id not in concept_node_indices:
+                continue
+            if not (0 <= sentence_index < len(sentence_node_indices)):
+                continue
+
+            source_index = sentence_node_indices[sentence_index]
+            target_index = concept_node_indices[concept_id]
+            edge_key = (source_index, target_index, "mention")
+            if edge_key not in mention_edge_keys:
+                mention_edge_keys.add(edge_key)
+                edges.append(
+                    {
+                        "source_index": source_index,
+                        "target_index": target_index,
+                        "edge_type": "mention",
+                        "source_type": "sentence",
+                        "target_type": "concept",
+                        "sentence_index": sentence_index,
+                        "section_index": section_index,
+                        "concept_id": concept_id,
+                    }
+                )
+
+            sentence_to_concepts.setdefault(sentence_index, set()).add(concept_id)
+            if section_index >= 0:
+                section_to_concepts.setdefault(section_index, set()).add(concept_id)
+
+        ontology_edge_keys: set[tuple[int, int, str]] = set()
+        for concept_edge in concept_annotation.get("concept_edges", []) or []:
+            source_concept_id = str(concept_edge.get("source_concept_id", ""))
+            target_concept_id = str(concept_edge.get("target_concept_id", ""))
+            if source_concept_id not in concept_node_indices or target_concept_id not in concept_node_indices:
+                continue
+            edge_key = (
+                concept_node_indices[source_concept_id],
+                concept_node_indices[target_concept_id],
+                "ontology",
+            )
+            if edge_key in ontology_edge_keys:
+                continue
+            ontology_edge_keys.add(edge_key)
+            edges.append(
+                {
+                    "source_index": concept_node_indices[source_concept_id],
+                    "target_index": concept_node_indices[target_concept_id],
+                    "edge_type": "ontology",
+                    "source_type": "concept",
+                    "target_type": "concept",
+                    "source_concept_id": source_concept_id,
+                    "target_concept_id": target_concept_id,
+                }
+            )
+
+        if add_concept_cooccurrence_edges:
+            cooccurrence_edge_keys: set[tuple[int, int, str]] = set()
+            for sentence_index, concept_ids in sentence_to_concepts.items():
+                sorted_ids = sorted(concept_ids)
+                for i in range(len(sorted_ids)):
+                    for j in range(i + 1, len(sorted_ids)):
+                        left_id = sorted_ids[i]
+                        right_id = sorted_ids[j]
+                        edge_key = (
+                            concept_node_indices[left_id],
+                            concept_node_indices[right_id],
+                            "same_sentence",
+                        )
+                        if edge_key in cooccurrence_edge_keys:
+                            continue
+                        cooccurrence_edge_keys.add(edge_key)
+                        edges.append(
+                            {
+                                "source_index": concept_node_indices[left_id],
+                                "target_index": concept_node_indices[right_id],
+                                "edge_type": "same_sentence",
+                                "source_type": "concept",
+                                "target_type": "concept",
+                                "sentence_index": sentence_index,
+                            }
+                        )
+
+            for section_index, concept_ids in section_to_concepts.items():
+                sorted_ids = sorted(concept_ids)
+                for i in range(len(sorted_ids)):
+                    for j in range(i + 1, len(sorted_ids)):
+                        left_id = sorted_ids[i]
+                        right_id = sorted_ids[j]
+                        edge_key = (
+                            concept_node_indices[left_id],
+                            concept_node_indices[right_id],
+                            "same_section",
+                        )
+                        if edge_key in cooccurrence_edge_keys:
+                            continue
+                        cooccurrence_edge_keys.add(edge_key)
+                        edges.append(
+                            {
+                                "source_index": concept_node_indices[left_id],
+                                "target_index": concept_node_indices[right_id],
+                                "edge_type": "same_section",
+                                "source_type": "concept",
+                                "target_type": "concept",
+                                "section_index": section_index,
+                            }
+                        )
+
     return edges
 
 
-def build_edge_tensors(edges: list[dict]) -> tuple[torch.Tensor, torch.Tensor]:
+def build_edge_tensors(edges: list[dict], edge_type_mapping: dict[str, int]) -> tuple[torch.Tensor, torch.Tensor]:
     if not edges:
         return (
             torch.empty((2, 0), dtype=torch.long),
@@ -427,7 +678,7 @@ def build_edge_tensors(edges: list[dict]) -> tuple[torch.Tensor, torch.Tensor]:
         [[int(edge["source_index"]) for edge in edges], [int(edge["target_index"]) for edge in edges]],
         dtype=torch.long,
     )
-    edge_type = torch.tensor([EDGE_TYPE_TO_ID[edge["edge_type"]] for edge in edges], dtype=torch.long)
+    edge_type = torch.tensor([edge_type_mapping[edge["edge_type"]] for edge in edges], dtype=torch.long)
     return edge_index, edge_type
 
 
@@ -435,46 +686,88 @@ def build_node_feature_matrix(
     document_feature: torch.Tensor,
     section_features: torch.Tensor,
     sentence_features: torch.Tensor,
+    concept_features: torch.Tensor | None = None,
 ) -> torch.Tensor:
     pieces = [document_feature.view(1, -1).float()]
     if section_features.numel() > 0:
         pieces.append(section_features.float())
     if sentence_features.numel() > 0:
         pieces.append(sentence_features.float())
+    if concept_features is not None and concept_features.numel() > 0:
+        pieces.append(concept_features.float())
     return torch.cat(pieces, dim=0)
 
 
-def build_node_type_tensor(section_count: int, sentence_count: int) -> torch.Tensor:
-    node_types = [NODE_TYPE_TO_ID["document"]]
-    node_types.extend([NODE_TYPE_TO_ID["section"]] * section_count)
-    node_types.extend([NODE_TYPE_TO_ID["sentence"]] * sentence_count)
+def build_node_type_tensor(
+    section_count: int,
+    sentence_count: int,
+    concept_count: int,
+    node_type_mapping: dict[str, int],
+) -> torch.Tensor:
+    node_types = [node_type_mapping["document"]]
+    node_types.extend([node_type_mapping["section"]] * section_count)
+    node_types.extend([node_type_mapping["sentence"]] * sentence_count)
+    if "concept" in node_type_mapping:
+        node_types.extend([node_type_mapping["concept"]] * concept_count)
     return torch.tensor(node_types, dtype=torch.long)
 
 
-def build_graph_payload(payload: dict, sentence_features: torch.Tensor) -> tuple[dict, dict]:
+def build_graph_payload(
+    payload: dict,
+    sentence_features: torch.Tensor,
+    concept_annotation: dict | None = None,
+    attach_concepts: bool = False,
+    add_concept_cooccurrence_edges: bool = True,
+) -> tuple[dict, dict]:
     validate_payload(payload, sentence_features)
 
     section_features = build_section_features(payload, sentence_features)
     document_feature = build_document_feature(section_features, sentence_features)
+    concept_features, concept_ids, concept_ic, concept_depth, concept_direct_mentions, concept_sentence_links = build_concept_features(
+        concept_annotation=concept_annotation,
+        sentence_features=sentence_features,
+    )
 
-    nodes, section_node_indices, sentence_node_indices = build_nodes(payload)
-    edges = build_edges(payload, section_node_indices=section_node_indices, sentence_node_indices=sentence_node_indices)
-    edge_index, edge_type = build_edge_tensors(edges)
+    node_type_mapping = CONCEPT_NODE_TYPE_TO_ID if attach_concepts else NODE_TYPE_TO_ID
+    edge_type_mapping = CONCEPT_EDGE_TYPE_TO_ID if attach_concepts else EDGE_TYPE_TO_ID
+
+    nodes, section_node_indices, sentence_node_indices, concept_node_indices = build_nodes(
+        payload,
+        concept_annotation=concept_annotation if attach_concepts else None,
+    )
+    edges = build_edges(
+        payload,
+        section_node_indices=section_node_indices,
+        sentence_node_indices=sentence_node_indices,
+        concept_node_indices=concept_node_indices,
+        concept_annotation=concept_annotation if attach_concepts else None,
+        add_concept_cooccurrence_edges=add_concept_cooccurrence_edges,
+    )
+    edge_index, edge_type = build_edge_tensors(edges, edge_type_mapping=edge_type_mapping)
 
     node_features = build_node_feature_matrix(
         document_feature=document_feature,
         section_features=section_features,
         sentence_features=sentence_features,
+        concept_features=concept_features if attach_concepts else None,
     )
     node_type = build_node_type_tensor(
         section_count=section_features.shape[0],
         sentence_count=sentence_features.shape[0],
+        concept_count=concept_features.shape[0] if attach_concepts else 0,
+        node_type_mapping=node_type_mapping,
     )
 
     graph_tensor_payload = {
         "document_feature": document_feature.float(),
         "section_features": section_features.float(),
         "sentence_features": sentence_features.float(),
+        "concept_features": concept_features.float(),
+        "concept_ids": concept_ids,
+        "concept_ic": concept_ic,
+        "concept_depth": concept_depth,
+        "concept_direct_mentions": concept_direct_mentions,
+        "concept_sentence_links": concept_sentence_links,
         "node_features": node_features.float(),
         "node_type": node_type,
         "edge_index": edge_index,
@@ -486,8 +779,8 @@ def build_graph_payload(payload: dict, sentence_features: torch.Tensor) -> tuple
         )
         if payload.get("sections")
         else torch.empty((0, 2), dtype=torch.long),
-        "node_type_mapping": NODE_TYPE_TO_ID,
-        "edge_type_mapping": EDGE_TYPE_TO_ID,
+        "node_type_mapping": node_type_mapping,
+        "edge_type_mapping": edge_type_mapping,
     }
 
     graph_json_payload = {
@@ -498,18 +791,26 @@ def build_graph_payload(payload: dict, sentence_features: torch.Tensor) -> tuple
         "source_pdf": payload.get("source_pdf"),
         "source_sentence_view_json": payload.get("source_sentence_view_json"),
         "source_preprocessed_json": payload.get("source_preprocessed_json") or payload.get("source_sentence_json"),
+        "source_concept_json": None,
         "embedding_path": payload.get("embedding_path"),
         "pooling": "mean",
         "feature_dim": FEATURE_DIM,
+        "graph_variant": "concept_graph" if attach_concepts else "hierarchy_graph",
         "graph_cleanup": payload.get("graph_cleanup", {}),
-        "node_type_mapping": NODE_TYPE_TO_ID,
-        "edge_type_mapping": EDGE_TYPE_TO_ID,
+        "node_type_mapping": node_type_mapping,
+        "edge_type_mapping": edge_type_mapping,
         "node_count": len(nodes),
         "edge_count": len(edges),
         "node_counts": {
             "document": 1,
             "section": int(section_features.shape[0]),
             "sentence": int(sentence_features.shape[0]),
+            "concept": int(concept_features.shape[0]),
+        },
+        "concept_count": int(concept_features.shape[0]),
+        "concept_annotation_summary": {
+            "mention_count": int(concept_annotation.get("mention_count", 0)) if concept_annotation else 0,
+            "direct_concept_count": int(concept_annotation.get("direct_concept_count", 0)) if concept_annotation else 0,
         },
         "nodes": nodes,
         "edges": edges,
@@ -521,6 +822,9 @@ def build_graph_for_document(
     metadata_json_path: Path,
     input_root: Path,
     output_root: Path,
+    concept_dir: Path | None = None,
+    attach_concepts: bool = False,
+    add_concept_cooccurrence_edges: bool = True,
 ) -> dict:
     payload = clean_payload(load_json(metadata_json_path), metadata_json_path=metadata_json_path, input_root=input_root)
     relative_path = metadata_json_path.relative_to(input_root)
@@ -533,6 +837,11 @@ def build_graph_for_document(
         embedding_path = Path(payload["embedding_path"])
     payload["embedding_path"] = str(embedding_path)
     sentence_features = torch.load(embedding_path, map_location="cpu")
+    concept_annotation, concept_json_path = load_optional_concept_annotation(
+        metadata_json_path=metadata_json_path,
+        input_root=input_root,
+        concept_dir=concept_dir if attach_concepts else None,
+    )
 
     if int(payload.get("sentence_count", 0)) == 0:
         if output_json_path.exists():
@@ -551,12 +860,20 @@ def build_graph_for_document(
             "edge_count": 0,
             "sentence_count": 0,
             "section_count": 0,
+            "concept_count": 0,
             "status": "skipped",
             "skip_reason": "empty_graph_after_cleanup",
             "graph_cleanup": payload.get("graph_cleanup", {}),
         }
 
-    graph_tensor_payload, graph_json_payload = build_graph_payload(payload, sentence_features=sentence_features)
+    graph_tensor_payload, graph_json_payload = build_graph_payload(
+        payload,
+        sentence_features=sentence_features,
+        concept_annotation=concept_annotation,
+        attach_concepts=attach_concepts,
+        add_concept_cooccurrence_edges=add_concept_cooccurrence_edges,
+    )
+    graph_json_payload["source_concept_json"] = concept_json_path
 
     torch.save(graph_tensor_payload, output_pt_path)
     graph_json_payload["graph_tensor_path"] = str(output_pt_path)
@@ -574,12 +891,20 @@ def build_graph_for_document(
         "edge_count": graph_json_payload["edge_count"],
         "sentence_count": graph_json_payload["node_counts"]["sentence"],
         "section_count": graph_json_payload["node_counts"]["section"],
+        "concept_count": graph_json_payload["node_counts"].get("concept", 0),
         "status": "success",
         "graph_cleanup": payload.get("graph_cleanup", {}),
     }
 
 
-def process_all_documents(input_dir: Path, output_dir: Path, limit: int | None) -> dict:
+def process_all_documents(
+    input_dir: Path,
+    output_dir: Path,
+    concept_dir: Path | None = None,
+    attach_concepts: bool = False,
+    add_concept_cooccurrence_edges: bool = True,
+    limit: int | None = None,
+) -> dict:
     input_root = Path(input_dir)
     output_root = Path(output_dir)
     ensure_dir(output_root)
@@ -601,6 +926,10 @@ def process_all_documents(input_dir: Path, output_dir: Path, limit: int | None) 
     if limit is not None:
         metadata_paths = metadata_paths[:limit]
 
+    concept_root = Path(concept_dir) if concept_dir is not None else None
+    if attach_concepts and concept_root is not None and not concept_root.exists():
+        LOGGER.warning("Concept annotation directory does not exist yet: %s", concept_root)
+
     LOGGER.info("Discovered %s embedding metadata JSON files under %s", len(metadata_paths), input_root)
 
     summaries: list[dict] = []
@@ -611,6 +940,9 @@ def process_all_documents(input_dir: Path, output_dir: Path, limit: int | None) 
                 metadata_json_path=metadata_json_path,
                 input_root=input_root,
                 output_root=output_root,
+                concept_dir=concept_root,
+                attach_concepts=attach_concepts,
+                add_concept_cooccurrence_edges=add_concept_cooccurrence_edges,
             )
         except Exception as exc:
             LOGGER.exception("Failed to build graph for %s", metadata_json_path)
@@ -626,6 +958,7 @@ def process_all_documents(input_dir: Path, output_dir: Path, limit: int | None) 
                 "edge_count": 0,
                 "sentence_count": 0,
                 "section_count": 0,
+                "concept_count": 0,
                 "status": "failed",
                 "error": str(exc),
             }
@@ -643,12 +976,15 @@ def process_all_documents(input_dir: Path, output_dir: Path, limit: int | None) 
     run_summary = {
         "input_dir": str(input_root),
         "output_dir": str(output_root),
+        "concept_dir": str(concept_root) if concept_root is not None else None,
         "pooling": "mean",
         "feature_dim": FEATURE_DIM,
         "graph_schema": {
-            "node_levels": ["document", "section", "sentence"],
-            "edge_types": ["parent", "next"],
+            "node_levels": ["document", "section", "sentence", "concept"] if attach_concepts else ["document", "section", "sentence"],
+            "edge_types": list(CONCEPT_EDGE_TYPE_TO_ID) if attach_concepts else ["parent", "next"],
         },
+        "attach_concepts": bool(attach_concepts),
+        "add_concept_cooccurrence_edges": bool(add_concept_cooccurrence_edges),
         "total_metadata_files": len(metadata_paths),
         "success_count": len(successes),
         "skipped_count": len(skipped),
@@ -679,8 +1015,14 @@ def parse_args() -> argparse.Namespace:
     filter_mode = str(get_value(preprocess_config, "filter_mode", "masked"))
     output_root = get_path(defaults_block, "output_root", DEFAULT_OUTPUT_ROOT, config_path)
 
+    concept_default = None
+    attach_concepts_default = get_bool(config, "attach_concepts", False)
+    output_dir_default = DEFAULT_OUTPUT_DIR
+    if attach_concepts_default:
+        output_dir_default = DEFAULT_OUTPUT_ROOT / DEFAULT_CONCEPT_GRAPH_OUTPUT_SUBDIRS["masked"]
+
     input_default = get_path(stage_block, "input_dir", DEFAULT_INPUT_DIR, config_path)
-    output_default = get_path(stage_block, "output_dir", DEFAULT_OUTPUT_DIR, config_path)
+    output_default = get_path(stage_block, "output_dir", output_dir_default, config_path)
 
     if stage_block:
         if stage_block.get("input_dir") in (None, ""):
@@ -688,12 +1030,26 @@ def parse_args() -> argparse.Namespace:
             conch_output_subdirs.update(get_value(get_stage_config(raw_config, "encode_sentence_exports_conch"), "output_subdirs", {}) or {})
             input_default = output_root / conch_output_subdirs.get(filter_mode, DEFAULT_CONCH_OUTPUT_SUBDIRS["masked"])
         if stage_block.get("output_dir") in (None, ""):
-            graph_output_subdirs = dict(DEFAULT_GRAPH_OUTPUT_SUBDIRS)
+            graph_output_subdirs = dict(
+                DEFAULT_CONCEPT_GRAPH_OUTPUT_SUBDIRS if attach_concepts_default else DEFAULT_GRAPH_OUTPUT_SUBDIRS
+            )
             graph_output_subdirs.update(get_value(config, "output_subdirs", {}) or {})
-            output_default = output_root / graph_output_subdirs.get(filter_mode, DEFAULT_GRAPH_OUTPUT_SUBDIRS["masked"])
+            default_key = "masked"
+            output_default = output_root / graph_output_subdirs.get(filter_mode, graph_output_subdirs[default_key])
+        if attach_concepts_default:
+            concept_output_subdirs = dict(DEFAULT_CONCEPT_OUTPUT_SUBDIRS)
+            concept_output_subdirs.update(
+                get_value(get_stage_config(raw_config, "extract_ontology_concepts"), "output_subdirs", {}) or {}
+            )
+            concept_default = get_path(
+                stage_block,
+                "concept_dir",
+                output_root / concept_output_subdirs.get(filter_mode, DEFAULT_CONCEPT_OUTPUT_SUBDIRS["masked"]),
+                config_path,
+            )
 
     parser = argparse.ArgumentParser(
-        description="Build Document -> Section -> Sentence hierarchy graphs from sentence-level CONCH embeddings."
+        description="Build Document -> Section -> Sentence hierarchy graphs with optional concept nodes from sentence-level CONCH embeddings."
     )
     parser.add_argument("--config", type=Path, default=pre_args.config, help="Optional YAML config preset.")
     parser.add_argument(
@@ -709,6 +1065,24 @@ def parse_args() -> argparse.Namespace:
         help="Directory for hierarchy graph outputs.",
     )
     parser.add_argument(
+        "--concept_dir",
+        type=Path,
+        default=concept_default,
+        help="Optional directory containing concept annotation JSON files aligned with the embedding metadata layout.",
+    )
+    parser.add_argument(
+        "--attach_concepts",
+        action="store_true",
+        default=attach_concepts_default,
+        help="Attach concept nodes and ontology-aware edges when concept annotations are available.",
+    )
+    parser.add_argument(
+        "--disable_concept_cooccurrence_edges",
+        action="store_true",
+        default=not get_bool(config, "add_concept_cooccurrence_edges", True),
+        help="Skip same-sentence and same-section concept co-occurrence edges.",
+    )
+    parser.add_argument(
         "--limit",
         type=int,
         default=None if get_value(config, "limit", None) is None else int(get_value(config, "limit", None)),
@@ -722,6 +1096,9 @@ def main() -> None:
     summary = process_all_documents(
         input_dir=args.input_dir,
         output_dir=args.output_dir,
+        concept_dir=args.concept_dir,
+        attach_concepts=args.attach_concepts,
+        add_concept_cooccurrence_edges=not args.disable_concept_cooccurrence_edges,
         limit=args.limit,
     )
     print(

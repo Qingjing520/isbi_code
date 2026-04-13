@@ -88,6 +88,11 @@ def parse_args() -> argparse.Namespace:
         help="Optional target average graph branch weight for dual_text gate regularization.",
     )
     ap.add_argument(
+        "--use_section_title_embedding",
+        action="store_true",
+        help="Enable section-title embeddings in the dual_text hierarchy readout.",
+    )
+    ap.add_argument(
         "--force_rerun",
         action="store_true",
         help="Ignore existing best_model.pt files and rerun those splits from scratch.",
@@ -143,6 +148,8 @@ def _build_cfg(base_cfg: Any, args: argparse.Namespace, split_idx: int, output_d
         cfg.loss.dual_text_gate_reg_weight = float(args.gate_reg_weight)
     if args.graph_weight_target is not None:
         cfg.loss.dual_text_graph_weight_target = float(args.graph_weight_target)
+    if args.use_section_title_embedding:
+        cfg.model.use_section_title_embedding = True
     cfg.train.num_workers = int(args.train_num_workers)
     cfg.output.exp_dir = os.path.abspath(output_dir)
     return cfg
@@ -264,6 +271,7 @@ def main() -> None:
         "output_dir": os.path.abspath(args.output_dir),
         "gate_reg_weight": args.gate_reg_weight,
         "graph_weight_target": args.graph_weight_target,
+        "use_section_title_embedding": bool(args.use_section_title_embedding),
         "force_rerun": bool(args.force_rerun),
     }
     with open(os.path.join(args.output_dir, "comparison_plan.json"), "w", encoding="utf-8") as f:
