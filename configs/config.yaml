@@ -40,6 +40,9 @@ data:
   text_mode: concept_graph
   sentence_text_dir: F:\Tasks\Text_Sentence_extract_features\KIRC_text
   graph_text_dir: F:\Tasks\isbi_code\pathology_report_extraction\Output\text_concept_graphs_masked\KIRC
+  # Preferred for hierarchy_graph / concept_graph / dual_text graph branch.
+  # This manifest makes slide -> graph -> label/split mapping explicit.
+  graph_manifest_csv: F:\Tasks\isbi_code\pathology_report_extraction\Output\manifests\kirc_concept_graph_manifest_split0.csv
 
   # 在 text_mode: hierarchy_graph / concept_graph 时可使用这个字段
   # 可选：

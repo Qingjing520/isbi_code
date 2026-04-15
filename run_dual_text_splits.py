@@ -70,6 +70,21 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--image_dir", type=str, default=str(DEFAULT_IMAGE_DIR))
     ap.add_argument("--sentence_text_dir", type=str, default=str(DEFAULT_SENTENCE_TEXT_DIR))
     ap.add_argument("--graph_text_dir", type=str, default=str(DEFAULT_GRAPH_TEXT_DIR))
+    ap.add_argument(
+        "--graph_manifest_csv",
+        type=str,
+        default="",
+        help="Optional graph manifest CSV. If set, the dual_text graph branch reads graph_pt/label/split from it.",
+    )
+    ap.add_argument(
+        "--graph_manifest_template",
+        type=str,
+        default="",
+        help=(
+            "Optional format string for split-specific graph manifests, "
+            "for example ...\\kirc_concept_graph_manifest_split{split_idx}.csv"
+        ),
+    )
     ap.add_argument("--output_dir", type=str, default=str(DEFAULT_OUTPUT_DIR))
     ap.add_argument("--num_splits", type=int, default=3)
     ap.add_argument("--split_offset", type=int, default=0)
@@ -143,6 +158,17 @@ def _build_cfg(base_cfg: Any, args: argparse.Namespace, split_idx: int, output_d
     cfg.data.text_dir = os.path.abspath(args.sentence_text_dir)
     cfg.data.sentence_text_dir = os.path.abspath(args.sentence_text_dir)
     cfg.data.graph_text_dir = os.path.abspath(args.graph_text_dir)
+    graph_manifest_csv = ""
+    if str(args.graph_manifest_template).strip():
+        dataset_name = _infer_dataset_name(args)
+        graph_manifest_csv = str(args.graph_manifest_template).format(
+            split_idx=split_idx,
+            dataset=dataset_name,
+            dataset_lower=dataset_name.lower(),
+        )
+    elif str(args.graph_manifest_csv).strip():
+        graph_manifest_csv = str(args.graph_manifest_csv)
+    cfg.data.graph_manifest_csv = os.path.abspath(graph_manifest_csv) if graph_manifest_csv else ""
     cfg.data.text_use_graph_structure = False
     if args.gate_reg_weight is not None:
         cfg.loss.dual_text_gate_reg_weight = float(args.gate_reg_weight)

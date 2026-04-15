@@ -102,6 +102,32 @@ Concept-graph manifests were generated successfully and can be used directly for
   - rows with concept level: `739`
   - total concept nodes across manifest rows: `52979`
 
+## Ontology audit outputs
+
+A cohort-level audit script is now available:
+
+- script:
+  - `F:\Tasks\isbi_code\pathology_report_extraction\audit_ontology_concepts.py`
+- latest summary:
+  - `F:\Tasks\isbi_code\pathology_report_extraction\Output\ontology_audits\ncit_pathology_subset_masked_brca_kirc_summary.json`
+
+Current audit highlights:
+
+- KIRC:
+  - total documents: `538`
+  - zero-concept documents: `0`
+  - unique concepts: `578`
+  - graph concept mismatch count: `0`
+- BRCA:
+  - total documents: `1105`
+  - zero-concept documents: `1`
+  - unique concepts: `769`
+  - missing graph documents: `1`
+- BRCA vs KIRC:
+  - shared concepts: `343`
+  - shared direct concepts: `150`
+  - direct-concept comparison is more pathology-specific than all-concept comparison because it suppresses many generic true-path ancestors.
+
 ## Commands used for the successful rerun
 
 ### Build ontology resources

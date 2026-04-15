@@ -19,6 +19,7 @@ class DataConfig:
     text_use_graph_structure: bool = False
     sentence_text_dir: str = ""
     graph_text_dir: str = ""
+    graph_manifest_csv: str = ""
 
 
 @dataclass
@@ -149,6 +150,7 @@ def get_config(path: str) -> Config:
             text_use_graph_structure=bool(data.get("text_use_graph_structure", False)),
             sentence_text_dir=_expand(data.get("sentence_text_dir", data.get("text_dir", ""))),
             graph_text_dir=_expand(data.get("graph_text_dir", data.get("text_dir", ""))),
+            graph_manifest_csv=_expand(data.get("graph_manifest_csv", "")),
         ),
         graph=GraphConfig(
             num_nodes_m=int(graph.get("num_nodes_m", 64)),

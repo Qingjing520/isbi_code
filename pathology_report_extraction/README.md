@@ -139,6 +139,19 @@ Concept extraction only:
 D:\ProgrammeFiles\Anaconda\envs\Pytorch\python.exe D:\Tasks\isbi_code\pathology_report_extraction\extract_ontology_concepts.py --config "D:\Tasks\isbi_code\pathology_report_extraction\config\pipeline.yaml"
 ```
 
+Ontology audit only:
+
+```powershell
+D:\ProgrammeFiles\Anaconda\envs\Pytorch\python.exe D:\Tasks\isbi_code\pathology_report_extraction\audit_ontology_concepts.py `
+  --cohort_name KIRC `
+  --annotation_dir "D:\Tasks\isbi_code\pathology_report_extraction\Output\concept_annotations_masked\KIRC" `
+  --graph_dir "D:\Tasks\isbi_code\pathology_report_extraction\Output\text_concept_graphs_masked\KIRC" `
+  --cohort_name BRCA `
+  --annotation_dir "D:\Tasks\isbi_code\pathology_report_extraction\Output\concept_annotations_masked\BRCA" `
+  --graph_dir "D:\Tasks\isbi_code\pathology_report_extraction\Output\text_concept_graphs_masked\BRCA" `
+  --output_json "D:\Tasks\isbi_code\pathology_report_extraction\Output\ontology_audits\ncit_pathology_subset_masked_brca_kirc_summary.json"
+```
+
 CONCH encoding only:
 
 ```powershell
@@ -216,6 +229,9 @@ For one report sample:
 - `Output\concept_annotations_<mode>\<report>.json`
   - lightweight ontology / concept annotations aligned to the sentence view
   - keeps direct mentions, true-path-expanded concepts, and concept-concept ontology links
+- `Output\ontology_audits\*.json`
+  - cohort-level ontology audit summaries
+  - useful for coverage checks, top concept review, and BRCA/KIRC concept comparison
 - `Output\text_hierarchy_graphs_<mode>\<report>.pt`
   - graph tensors for training
   - can remain plain hierarchy graphs, or become concept-enhanced graphs when `attach_concepts: true`

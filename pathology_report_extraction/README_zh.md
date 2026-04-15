@@ -141,6 +141,19 @@ D:\ProgrammeFiles\Anaconda\envs\Pytorch\python.exe D:\Tasks\isbi_code\pathology_
 D:\ProgrammeFiles\Anaconda\envs\Pytorch\python.exe D:\Tasks\isbi_code\pathology_report_extraction\extract_ontology_concepts.py --config "D:\Tasks\isbi_code\pathology_report_extraction\config\pipeline.yaml"
 ```
 
+只跑 ontology audit：
+
+```powershell
+D:\ProgrammeFiles\Anaconda\envs\Pytorch\python.exe D:\Tasks\isbi_code\pathology_report_extraction\audit_ontology_concepts.py `
+  --cohort_name KIRC `
+  --annotation_dir "D:\Tasks\isbi_code\pathology_report_extraction\Output\concept_annotations_masked\KIRC" `
+  --graph_dir "D:\Tasks\isbi_code\pathology_report_extraction\Output\text_concept_graphs_masked\KIRC" `
+  --cohort_name BRCA `
+  --annotation_dir "D:\Tasks\isbi_code\pathology_report_extraction\Output\concept_annotations_masked\BRCA" `
+  --graph_dir "D:\Tasks\isbi_code\pathology_report_extraction\Output\text_concept_graphs_masked\BRCA" `
+  --output_json "D:\Tasks\isbi_code\pathology_report_extraction\Output\ontology_audits\ncit_pathology_subset_masked_brca_kirc_summary.json"
+```
+
 只跑 CONCH 编码：
 
 ```powershell
@@ -218,6 +231,9 @@ D:\Tasks\isbi_code\pathology_report_extraction\Output
 - `Output\concept_annotations_<mode>\<report>.json`
   - 轻量 ontology / concept 标注结果
   - 包含 direct mention、true-path 扩展概念和 concept-concept ontology 边
+- `Output\ontology_audits\*.json`
+  - cohort 级别 ontology 审计结果
+  - 可用于看覆盖率、top concepts 和 BRCA/KIRC 的概念差异
 - `Output\text_hierarchy_graphs_<mode>\<report>.pt`
   - 训练用图张量
   - `attach_concepts: true` 时会升级成 concept-enhanced graph

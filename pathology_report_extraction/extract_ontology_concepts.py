@@ -184,6 +184,185 @@ PATHOLOGY_SINGLE_TOKEN_WHITELIST = {
     "nodal",
     "node",
 }
+TRUE_PATH_ANCESTOR_EXACT_EXCLUDE_NAMES = {
+    "action",
+    "activity",
+    "abdominal aorta branch",
+    "ablation therapy",
+    "ablative endocrine surgery",
+    "adverse event classification",
+    "anatomic site",
+    "anatomic pathology procedure",
+    "anatomic structure",
+    "anatomical structure",
+    "anatomic structure, system, or substance",
+    "anatomical structure, system, or substance",
+    "anatomy qualifier",
+    "assessment",
+    "antibody",
+    "biological process",
+    "biological sciences",
+    "biology",
+    "biospecimen type",
+    "biopsy procedure",
+    "biopsy procedure by anatomic location",
+    "blood vessel",
+    "body part",
+    "body cavity",
+    "cancer biology",
+    "cancer histology",
+    "breast disorder",
+    "breast cancer diagnostic or therapeutic procedure",
+    "breast cancer therapeutic procedure",
+    "breast surgery",
+    "cancer diagnostic or therapeutic procedure",
+    "cancer therapeutic procedure",
+    "cell",
+    "classification",
+    "classification of event",
+    "clinical or research assessment answer",
+    "clinical evaluation",
+    "clinical intervention or procedure",
+    "clinical or research activity",
+    "clinical course of disease",
+    "clinical test result",
+    "clavien-dindo classification",
+    "conceptual entity",
+    "cptac responses",
+    "diagnostic procedure",
+    "diagnostic or prognostic factor",
+    "disease progression",
+    "disease grade qualifier",
+    "disease involvement site",
+    "disease morphology qualifier",
+    "disease qualifier",
+    "disease, disorder or finding",
+    "disease or disorder",
+    "disease response",
+    "disorder by site",
+    "endocrine gland",
+    "epithelial cell",
+    "focality",
+    "finding",
+    "finding by site or system",
+    "general qualifier",
+    "gene product",
+    "gland",
+    "glandular cell",
+    "histological procedure",
+    "histopathology result",
+    "intellectual property",
+    "immunoprotein",
+    "information",
+    "kidney part",
+    "laboratory procedure",
+    "laboratory test result",
+    "laparoscopic surgery",
+    "lesion size",
+    "ligand binding protein",
+    "lipid",
+    "lymph node biopsy",
+    "mass",
+    "medical examination assessment",
+    "medical status",
+    "microanatomic structure",
+    "morphologic finding",
+    "negative test result",
+    "needle biopsy",
+    "neoplasm by special category",
+    "non-neoplastic breast disorder",
+    "non-neoplastic disorder",
+    "number",
+    "other anatomic concept",
+    "occupation or discipline",
+    "organic chemical",
+    "organ",
+    "organ capsule",
+    "organ state",
+    "pathologic process",
+    "pathology result",
+    "physiology-regulatory factor",
+    "progestogen",
+    "progressive disease",
+    "progressive neoplastic disease",
+    "protein",
+    "protein, organized by function",
+    "property or attribute",
+    "qualifier",
+    "ring compound",
+    "sample type",
+    "size",
+    "spatial anatomic qualifier",
+    "spatial qualifier",
+    "specimen anatomic site",
+    "special histology staining method",
+    "status",
+    "staining method",
+    "steroid compound",
+    "steroid hormone",
+    "substance",
+    "surgical procedure",
+    "surgical procedure by site or system",
+    "temporal qualifier",
+    "therapeutic procedure",
+    "renal tissue",
+    "tissue",
+    "tumor event information",
+    "tumor-associated process",
+    "tumor progression",
+    "type",
+    "urologic surgical procedure",
+    "urogenital surgical procedure",
+    "urinary system finding",
+    "urinary system part",
+    "vein",
+    "artery",
+    "drug, food, chemical or biomedical material",
+    "drug or chemical by structure",
+    "heterocyclic compound",
+    "hormone",
+    "cancer progression",
+}
+TRUE_PATH_ANCESTOR_EXCLUDE_CUES = (
+    "anatomic qualifier",
+    "anatomic site",
+    "anatomic concept",
+    "anatomic pathology procedure",
+    "assessment",
+    "by anatomic site",
+    "biopsy procedure",
+    "biospecimen",
+    "chemical",
+    "classification",
+    "diagnostic or therapeutic procedure",
+    "diagnostic procedure",
+    "clinical intervention or procedure",
+    "clinical or research activity",
+    "clinical or research assessment",
+    "clinical evaluation",
+    "disease, disorder or finding",
+    "disease or disorder",
+    "disease morphology qualifier",
+    "disease grade qualifier",
+    "disease qualifier",
+    "disease progression",
+    "examination",
+    "finding by",
+    "generic qualifier",
+    "hormone",
+    "laboratory procedure",
+    "laboratory test result",
+    "clinical test result",
+    "anatomic structure, system, or substance",
+    "non-neoplastic disorder",
+    "organized by function",
+    "status",
+    "specimen anatomic",
+    "steroid",
+    "staining method",
+    "surgical procedure",
+    "system part",
+)
 
 DEFAULT_OUTPUT_ROOT = Path(r"D:\Tasks\isbi_code\pathology_report_extraction\Output")
 DEFAULT_INPUT_DIR = DEFAULT_OUTPUT_ROOT / "sentence_exports_masked"
@@ -500,6 +679,24 @@ def compute_depths(ontology: dict[str, dict[str, Any]]) -> dict[str, int]:
     return memo
 
 
+def _is_generic_true_path_ancestor(concept_name: str) -> bool:
+    normalized_name = _normalize_text(concept_name)
+    if not normalized_name:
+        return True
+    if normalized_name in TRUE_PATH_ANCESTOR_EXACT_EXCLUDE_NAMES:
+        return True
+    return any(cue in normalized_name for cue in TRUE_PATH_ANCESTOR_EXCLUDE_CUES)
+
+
+def _should_retain_true_path_ancestor(
+    concept_id: str,
+    ontology: dict[str, dict[str, Any]],
+) -> bool:
+    concept_record = ontology.get(concept_id, {})
+    concept_name = str(concept_record.get("name") or concept_id)
+    return not _is_generic_true_path_ancestor(concept_name)
+
+
 def _find_sentence_mentions(
     sentence_text: str,
     sentence_index: int,
@@ -610,11 +807,13 @@ def _expand_true_path(
             if parent_id in visited or parent_id not in ontology:
                 continue
             visited.add(parent_id)
+            queue.extend(list(ontology.get(parent_id, {}).get("parents", []) or []))
+            if not _should_retain_true_path_ancestor(parent_id, ontology):
+                continue
             parent_entry = _get_or_create_concept_summary(concept_index, ontology, depths, parent_id)
             parent_entry["sentence_indices"].update(direct_entry["sentence_indices"])
             parent_entry["section_indices"].update(direct_entry["section_indices"])
             parent_entry["ancestor_of"].add(concept_id)
-            queue.extend(parent_entry.get("parents", []))
 
 
 def build_concept_annotation(
@@ -705,6 +904,9 @@ def build_concept_annotation(
         "source_sentence_view_json": sentence_view.get("source_json"),
         "matching_method": "keyword_synonym_filtered",
         "include_true_path": bool(include_true_path),
+        "true_path_ancestor_filter": (
+            "generic_superclasses_pruned_v4" if include_true_path else "disabled"
+        ),
         "ontology_source": ontology_source,
         "sentence_count": int(sentence_view.get("sentence_count", 0)),
         "section_count": int(sentence_view.get("section_count", 0)),
@@ -849,6 +1051,9 @@ def process_all_documents(
         "ontology_source": ontology_source,
         "ontology_concept_count": len(ontology),
         "include_true_path": bool(include_true_path),
+        "true_path_ancestor_filter": (
+            "generic_superclasses_pruned_v4" if include_true_path else "disabled"
+        ),
         "default_ic": float(default_ic),
         "total_sentence_exports": len(sentence_export_paths),
         "success_count": len(successes),
