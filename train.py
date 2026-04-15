@@ -3,6 +3,7 @@ import os
 import json
 import math
 import random
+import re
 from datetime import datetime
 from dataclasses import asdict
 from typing import List, Tuple
@@ -22,6 +23,9 @@ from models.hier_text import DualTextFusion, HierTextBranch
 from models.text_graph import TextHierarchyGraphEncoder
 from utils.graph_utils import build_graph_features
 from utils.metrics import safe_auc
+
+
+_SECTION_TITLE_CACHE: dict[str, list[str]] = {}
 
 
 def set_seed(seed: int):
@@ -96,13 +100,13 @@ def move_text_batch_to_device(
             )
         return moved
 
-    if text_mode != "hierarchy_graph" or not text_use_graph_structure:
+    if text_mode not in {"hierarchy_graph", "concept_graph"} or not text_use_graph_structure:
         return [x.to(device).float() for x in txt_list]
 
     moved: List[dict] = []
     for payload in txt_list:
         if not isinstance(payload, dict):
-            raise TypeError("Expected dict payloads for graph-structured hierarchy text mode.")
+            raise TypeError(f"Expected dict payloads for graph-structured {text_mode} mode.")
         item = {}
         for key, value in payload.items():
             if isinstance(value, torch.Tensor):
@@ -123,6 +127,9 @@ def encode_text_batch(
     device: torch.device,
     text_mode: str,
     text_use_graph_structure: bool,
+    text_graph_use_next_edges: bool = True,
+    use_section_title_embedding: bool = False,
+    section_title_to_id: dict[str, int] | None = None,
 ) -> Tuple[List[torch.Tensor], torch.Tensor, dict]:
     if text_mode == "dual_text":
         if pool_txt is None or hier_text_branch is None or dual_text_fusion is None:
@@ -144,16 +151,26 @@ def encode_text_batch(
             graph_payload = payload["hierarchy_graph"]  # type: ignore[index]
             sentence_features = graph_payload["sentence_features"].float()
             mapped_sentence_features = mapper(sentence_features)
+            graph_json_path = str(payload.get("graph_json_path", ""))
+            section_title_ids = None
+            if use_section_title_embedding and section_title_to_id:
+                section_title_ids = _section_title_ids_from_graph_json(
+                    graph_json_path=graph_json_path,
+                    num_sections=int(graph_payload["section_spans"].shape[0]),
+                    title_to_id=section_title_to_id,
+                    device=device,
+                )
             sentence_out, section_out, document_out, branch_analysis = hier_text_branch(
                 sentence_features=mapped_sentence_features,
                 section_spans=graph_payload["section_spans"].long(),
+                section_title_ids=section_title_ids,
             )
             graph_sentence_nodes.append(sentence_out)
             graph_section_vecs.append(section_out)
             graph_doc_vecs.append(document_out)
             graph_doc_section_attn.append(branch_analysis["document_section_attn"])
             graph_section_sentence_attn.append(branch_analysis["section_sentence_attn"])
-            graph_json_paths.append(str(payload.get("graph_json_path", "")))
+            graph_json_paths.append(graph_json_path)
             graph_section_attention_mix.append(branch_analysis["section_attention_mix"])
             graph_document_attention_mix.append(branch_analysis["document_attention_mix"])
 
@@ -174,12 +191,13 @@ def encode_text_batch(
         }
         return fused_nodes, fused_vec, extras
 
-    if text_mode == "hierarchy_graph" and text_use_graph_structure:
+    if text_mode in {"hierarchy_graph", "concept_graph"} and text_use_graph_structure:
         if text_graph_encoder is None:
             raise RuntimeError("text_graph_encoder is required when text_use_graph_structure=True")
 
         node_lists: List[torch.Tensor] = []
         pooled_vecs: List[torch.Tensor] = []
+        graph_topology_descs: List[torch.Tensor] = []
         for payload in txt_list:
             if not isinstance(payload, dict):
                 raise TypeError("Expected dict payload for graph-aware text encoding.")
@@ -187,15 +205,21 @@ def encode_text_batch(
                 raise KeyError("Graph payload missing 'node_features'.")
 
             x = mapper(payload["node_features"].float())
+            allowed_forward_relation_ids = _allowed_forward_relation_ids_from_payload(
+                payload=payload,
+                text_graph_use_next_edges=text_graph_use_next_edges,
+            )
             updated_nodes, pooled_vec = text_graph_encoder(
                 node_features=x,
                 edge_index=payload["edge_index"].long(),
                 edge_type=payload["edge_type"].long(),
                 node_type=payload["node_type"].long(),
+                allowed_forward_relation_ids=allowed_forward_relation_ids,
             )
             node_lists.append(updated_nodes)
             pooled_vecs.append(pooled_vec)
-        return node_lists, torch.stack(pooled_vecs, dim=0), {}
+            graph_topology_descs.append(_graph_structure_descriptor(payload))
+        return node_lists, torch.stack(pooled_vecs, dim=0), {"graph_topology_descs": graph_topology_descs}
 
     if pool_txt is None:
         raise RuntimeError("pool_txt must be available for non-graph text encoding.")
@@ -204,6 +228,153 @@ def encode_text_batch(
     txt_pad, txt_mask = pad_and_mask(mapped, device)
     txt_vec, _ = pool_txt(txt_pad, txt_mask)
     return mapped, txt_vec, {}
+
+
+def _allowed_forward_relation_ids_from_payload(
+    payload: dict,
+    text_graph_use_next_edges: bool,
+) -> list[int] | None:
+    edge_type_mapping = payload.get("edge_type_mapping", {})
+    if not isinstance(edge_type_mapping, dict) or text_graph_use_next_edges:
+        return None
+
+    allowed: list[int] = []
+    for edge_name, rel_id in edge_type_mapping.items():
+        try:
+            rel_index = int(rel_id)
+        except (TypeError, ValueError):
+            continue
+        if str(edge_name).lower() == "next":
+            continue
+        allowed.append(rel_index)
+    return sorted(set(allowed)) or None
+
+
+def _graph_mode_uses_structure(text_mode: str) -> bool:
+    return text_mode in {"hierarchy_graph", "concept_graph"}
+
+
+def _auto_text_graph_num_node_types(text_mode: str) -> int:
+    if text_mode == "concept_graph":
+        return 4
+    return 3
+
+
+def _auto_text_graph_num_base_relations(text_mode: str) -> int:
+    if text_mode == "concept_graph":
+        return 6
+    return 2
+
+
+def _text_graph_num_node_types(cfg) -> int:
+    configured = int(_get_optional(cfg, "model.text_graph_num_node_types", 0))
+    if configured > 0:
+        return configured
+    return _auto_text_graph_num_node_types(getattr(cfg.data, "text_mode", "sentence_pt"))
+
+
+def _text_graph_num_base_relations(cfg) -> int:
+    configured = int(_get_optional(cfg, "model.text_graph_num_base_relations", 0))
+    if configured > 0:
+        return configured
+    return _auto_text_graph_num_base_relations(getattr(cfg.data, "text_mode", "sentence_pt"))
+
+
+def _node_type_id_from_payload(payload: dict, node_type_name: str) -> int | None:
+    mapping = payload.get("node_type_mapping", {})
+    if not isinstance(mapping, dict):
+        return None
+    raw = mapping.get(node_type_name)
+    if raw is None:
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _collect_node_type_features(
+    node_lists: List[torch.Tensor],
+    payloads: List[torch.Tensor | dict],
+    node_type_name: str,
+) -> torch.Tensor | None:
+    collected: list[torch.Tensor] = []
+    for nodes, payload in zip(node_lists, payloads):
+        if not isinstance(payload, dict):
+            continue
+        node_type_id = _node_type_id_from_payload(payload, node_type_name)
+        if node_type_id is None:
+            continue
+        node_type_tensor = payload.get("node_type")
+        if not isinstance(node_type_tensor, torch.Tensor):
+            continue
+        mask = node_type_tensor.long() == int(node_type_id)
+        if bool(mask.any()):
+            collected.append(nodes[mask])
+    if not collected:
+        return None
+    return torch.cat(collected, dim=0)
+
+
+def _graph_structure_descriptor(payload: dict) -> torch.Tensor:
+    if not isinstance(payload, dict):
+        raise TypeError("Expected dict payload for graph structure descriptor.")
+
+    node_type_tensor = payload.get("node_type")
+    edge_type_tensor = payload.get("edge_type")
+    if not isinstance(node_type_tensor, torch.Tensor) or not isinstance(edge_type_tensor, torch.Tensor):
+        raise KeyError("Graph payload missing node_type or edge_type tensors.")
+
+    node_type_mapping = payload.get("node_type_mapping", {})
+    edge_type_mapping = payload.get("edge_type_mapping", {})
+    if not isinstance(node_type_mapping, dict):
+        node_type_mapping = {}
+    if not isinstance(edge_type_mapping, dict):
+        edge_type_mapping = {}
+
+    node_dim = max((int(v) for v in node_type_mapping.values()), default=int(node_type_tensor.max().item()) if node_type_tensor.numel() else -1) + 1
+    edge_dim = max((int(v) for v in edge_type_mapping.values()), default=int(edge_type_tensor.max().item()) if edge_type_tensor.numel() else -1) + 1
+
+    node_counts = torch.zeros(node_dim, device=node_type_tensor.device, dtype=torch.float32)
+    edge_counts = torch.zeros(edge_dim, device=edge_type_tensor.device, dtype=torch.float32)
+    if node_type_tensor.numel() > 0:
+        node_counts.scatter_add_(
+            0,
+            node_type_tensor.long(),
+            torch.ones_like(node_type_tensor, dtype=torch.float32),
+        )
+    if edge_type_tensor.numel() > 0:
+        edge_counts.scatter_add_(
+            0,
+            edge_type_tensor.long(),
+            torch.ones_like(edge_type_tensor, dtype=torch.float32),
+        )
+
+    node_counts = node_counts / max(int(node_type_tensor.numel()), 1)
+    edge_counts = edge_counts / max(int(edge_type_tensor.numel()), 1)
+
+    concept_ic = payload.get("concept_ic")
+    concept_depth = payload.get("concept_depth")
+    concept_direct_mentions = payload.get("concept_direct_mentions")
+    concept_stats = torch.zeros(4, device=node_type_tensor.device, dtype=torch.float32)
+    if isinstance(concept_ic, torch.Tensor) and concept_ic.numel() > 0:
+        concept_stats[0] = concept_ic.float().mean()
+        concept_stats[1] = concept_ic.float().max()
+    if isinstance(concept_depth, torch.Tensor) and concept_depth.numel() > 0:
+        concept_stats[2] = concept_depth.float().mean()
+    if isinstance(concept_direct_mentions, torch.Tensor) and concept_direct_mentions.numel() > 0:
+        concept_stats[3] = concept_direct_mentions.float().mean()
+
+    size_stats = torch.tensor(
+        [
+            float(node_type_tensor.numel()),
+            float(edge_type_tensor.numel()),
+        ],
+        device=node_type_tensor.device,
+        dtype=torch.float32,
+    )
+    size_stats = torch.log1p(size_stats)
+    return torch.cat([node_counts, edge_counts, concept_stats, size_stats], dim=0)
 
 
 def _get_optional(cfg, path: str, default):
@@ -253,6 +424,21 @@ def _ts() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _normalize_section_title(title: str) -> str:
+    text = re.sub(r"\s+", " ", str(title or "").strip()).upper()
+    return text
+
+
+def _section_title_to_id_from_cfg(cfg) -> dict[str, int]:
+    vocab = list(getattr(cfg.model, "section_title_vocab", []) or [])
+    # 0 is reserved for unknown / missing titles.
+    return {_normalize_section_title(title): idx + 1 for idx, title in enumerate(vocab)}
+
+
+def _num_section_title_types_from_cfg(cfg) -> int:
+    return len(list(getattr(cfg.model, "section_title_vocab", []) or [])) + 1
+
+
 def _load_section_titles(graph_json_path: str, cache: dict[str, list[str]]) -> list[str]:
     graph_json_path = str(graph_json_path or "").strip()
     if not graph_json_path:
@@ -274,6 +460,19 @@ def _load_section_titles(graph_json_path: str, cache: dict[str, list[str]]) -> l
     titles = [title for _idx, title in sections]
     cache[graph_json_path] = titles
     return titles
+
+
+def _section_title_ids_from_graph_json(
+    graph_json_path: str,
+    num_sections: int,
+    title_to_id: dict[str, int],
+    device: torch.device,
+) -> torch.Tensor:
+    titles = _load_section_titles(graph_json_path, _SECTION_TITLE_CACHE)
+    ids = [int(title_to_id.get(_normalize_section_title(title), 0)) for title in titles[:num_sections]]
+    if len(ids) < num_sections:
+        ids.extend([0] * (num_sections - len(ids)))
+    return torch.tensor(ids[:num_sections], dtype=torch.long, device=device)
 
 
 def _attention_entropy(attn: torch.Tensor) -> float | None:
@@ -326,6 +525,8 @@ def evaluate(
     sample_details: list[dict[str, object]] = []
     text_mode = getattr(cfg.data, "text_mode", "sentence_pt")
     text_use_graph_structure = bool(getattr(cfg.data, "text_use_graph_structure", False))
+    use_section_title_embedding = bool(getattr(cfg.model, "use_section_title_embedding", False))
+    section_title_to_id = _section_title_to_id_from_cfg(cfg) if use_section_title_embedding else None
 
     for img_list, txt_list, labels, _ids in loader:
         img_list = [x.to(device).float() for x in img_list]
@@ -349,6 +550,9 @@ def evaluate(
             device=device,
             text_mode=text_mode,
             text_use_graph_structure=text_use_graph_structure,
+            text_graph_use_next_edges=bool(getattr(cfg.model, "text_graph_use_next_edges", True)),
+            use_section_title_embedding=use_section_title_embedding,
+            section_title_to_id=section_title_to_id,
         )
 
         # Attention pooling
@@ -366,13 +570,13 @@ def evaluate(
         all_probs.extend(probs.detach().cpu().tolist())
         all_preds.extend(preds.detach().cpu().tolist())
 
-        if text_mode == "dual_text":
-            batch_size = len(labels.detach().cpu().view(-1).tolist())
-            batch_ids = [str(x) for x in _ids]
-            batch_labels = [int(x) for x in labels.detach().cpu().view(-1).tolist()]
-            batch_probs = [float(x) for x in probs.detach().cpu().view(-1).tolist()]
-            batch_preds = [int(x) for x in preds.detach().cpu().view(-1).tolist()]
+        batch_size = len(labels.detach().cpu().view(-1).tolist())
+        batch_ids = [str(x) for x in _ids]
+        batch_labels = [int(x) for x in labels.detach().cpu().view(-1).tolist()]
+        batch_probs = [float(x) for x in probs.detach().cpu().view(-1).tolist()]
+        batch_preds = [int(x) for x in preds.detach().cpu().view(-1).tolist()]
 
+        if text_mode == "dual_text":
             gate_values: list[float | None] = [None] * batch_size
             gate_tensor = _txt_extra.get("fusion_gate")
             if isinstance(gate_tensor, torch.Tensor):
@@ -454,6 +658,17 @@ def evaluate(
                         else None,
                     }
                 )
+        else:
+            for sample_idx in range(batch_size):
+                sample_details.append(
+                    {
+                        "slide_id": batch_ids[sample_idx] if sample_idx < len(batch_ids) else "",
+                        "label": batch_labels[sample_idx],
+                        "pred": batch_preds[sample_idx],
+                        "prob_late": batch_probs[sample_idx],
+                        "correct": bool(batch_labels[sample_idx] == batch_preds[sample_idx]),
+                    }
+                )
 
     if len(all_labels) == 0:
         return {"acc": 0.0, "auc": float("nan")}
@@ -480,6 +695,8 @@ def evaluate(
             "top_section_counts": dict(top_section_counter.most_common()),
             "sample_details": sample_details,
         }
+    else:
+        analysis = {"sample_details": sample_details}
 
     # if print_dist:
     #     print("tgt label dist:", np.bincount(y_true, minlength=2).tolist())
@@ -514,18 +731,20 @@ def train_one_split(cfg):
 
     text_mode = getattr(cfg.data, "text_mode", "sentence_pt")
     text_use_graph_structure = bool(getattr(cfg.data, "text_use_graph_structure", False))
-    if text_use_graph_structure and text_mode != "hierarchy_graph":
-        raise ValueError("text_use_graph_structure=True requires text_mode='hierarchy_graph'.")
+    if text_use_graph_structure and not _graph_mode_uses_structure(text_mode):
+        raise ValueError("text_use_graph_structure=True requires text_mode='hierarchy_graph' or 'concept_graph'.")
+    use_section_title_embedding = bool(getattr(cfg.model, "use_section_title_embedding", False))
+    section_title_to_id = _section_title_to_id_from_cfg(cfg) if use_section_title_embedding else None
 
     pool_txt = None
     text_graph_encoder = None
     hier_text_branch = None
     dual_text_fusion = None
-    if text_mode == "hierarchy_graph" and text_use_graph_structure:
+    if _graph_mode_uses_structure(text_mode) and text_use_graph_structure:
         text_graph_encoder = TextHierarchyGraphEncoder(
             dim=cfg.model.feat_dim,
-            num_node_types=3,
-            num_base_relations=2,
+            num_node_types=_text_graph_num_node_types(cfg),
+            num_base_relations=_text_graph_num_base_relations(cfg),
             num_layers=cfg.model.text_graph_layers,
             dropout=cfg.model.text_graph_dropout,
             use_next_edges=cfg.model.text_graph_use_next_edges,
@@ -544,6 +763,8 @@ def train_one_split(cfg):
                 sentence_local_layers=cfg.model.sentence_local_layers,
                 sentence_local_heads=cfg.model.sentence_local_heads,
                 readout_attention_init=cfg.model.hier_readout_attention_init,
+                use_section_title_embedding=use_section_title_embedding,
+                num_section_title_types=_num_section_title_types_from_cfg(cfg),
             ).to(device)
             dual_text_fusion = DualTextFusion(
                 dim=cfg.model.feat_dim,
@@ -627,8 +848,10 @@ def train_one_split(cfg):
             "loss_total": 0.0,
             "loss_cls": 0.0,
             "loss_txt": 0.0,
+            "loss_concept": 0.0,
             "loss_node": 0.0,
             "loss_topo": 0.0,
+            "loss_text_topology": 0.0,
             "loss_gate": 0.0,
             "graph_weight": 0.0,
             "steps": 0,
@@ -671,6 +894,9 @@ def train_one_split(cfg):
                 device=device,
                 text_mode=text_mode,
                 text_use_graph_structure=text_use_graph_structure,
+                text_graph_use_next_edges=cfg.model.text_graph_use_next_edges,
+                use_section_title_embedding=use_section_title_embedding,
+                section_title_to_id=section_title_to_id,
             )
             txt_t_nodes, _txt_t_vec, txt_t_extra = encode_text_batch(
                 txt_list=txt_t,
@@ -682,6 +908,9 @@ def train_one_split(cfg):
                 device=device,
                 text_mode=text_mode,
                 text_use_graph_structure=text_use_graph_structure,
+                text_graph_use_next_edges=cfg.model.text_graph_use_next_edges,
+                use_section_title_embedding=use_section_title_embedding,
+                section_title_to_id=section_title_to_id,
             )
 
             # ===== Classification on SOURCE only =====
@@ -694,8 +923,10 @@ def train_one_split(cfg):
 
             # ===== Alignment losses (after warmup) =====
             loss_txt = torch.zeros((), device=device)
+            loss_concept = torch.zeros((), device=device)
             loss_node = torch.zeros((), device=device)
             loss_topo = torch.zeros((), device=device)
+            loss_text_topology = torch.zeros((), device=device)
             loss_gate = torch.zeros((), device=device)
             graph_weight_mean = torch.zeros((), device=device)
 
@@ -770,9 +1001,39 @@ def train_one_split(cfg):
                     clamp_nonneg=cfg.loss.mmd_clamp_nonneg,
                 )
 
+                if text_mode == "concept_graph" and text_use_graph_structure:
+                    concept_nodes_s = _collect_node_type_features(txt_s_nodes, txt_s, "concept")
+                    concept_nodes_t = _collect_node_type_features(txt_t_nodes, txt_t, "concept")
+                    if concept_nodes_s is not None and concept_nodes_t is not None:
+                        loss_concept = mmd_rbf(
+                            concept_nodes_s,
+                            concept_nodes_t,
+                            sigma_multipliers=cfg.loss.mmd_sigma_multipliers,
+                            unbiased=cfg.loss.mmd_unbiased,
+                            clamp_nonneg=cfg.loss.mmd_clamp_nonneg,
+                        )
+
+                    topo_descs_s = txt_s_extra.get("graph_topology_descs", [])
+                    topo_descs_t = txt_t_extra.get("graph_topology_descs", [])
+                    if isinstance(topo_descs_s, list) and isinstance(topo_descs_t, list) and topo_descs_s and topo_descs_t:
+                        loss_text_topology = mmd_rbf(
+                            torch.stack(topo_descs_s, dim=0),
+                            torch.stack(topo_descs_t, dim=0),
+                            sigma_multipliers=cfg.loss.mmd_sigma_multipliers,
+                            unbiased=cfg.loss.mmd_unbiased,
+                            clamp_nonneg=cfg.loss.mmd_clamp_nonneg,
+                        )
+
             loss = (
                 loss_cls
-                + decay_factor * (cfg.loss.alpha_txt * loss_txt + cfg.loss.beta_node * loss_node + cfg.loss.gamma_topo * loss_topo)
+                + decay_factor
+                * (
+                    cfg.loss.alpha_txt * loss_txt
+                    + cfg.loss.alpha_concept * loss_concept
+                    + cfg.loss.beta_node * loss_node
+                    + cfg.loss.gamma_topo * loss_topo
+                    + cfg.loss.gamma_text_topology * loss_text_topology
+                )
                 + gate_reg_weight * loss_gate
             )
 
@@ -785,14 +1046,26 @@ def train_one_split(cfg):
             running["loss_total"] += float(loss.item())
             running["loss_cls"] += float(loss_cls.item())
             running["loss_txt"] += float(loss_txt.item())
+            running["loss_concept"] += float(loss_concept.item())
             running["loss_node"] += float(loss_node.item())
             running["loss_topo"] += float(loss_topo.item())
+            running["loss_text_topology"] += float(loss_text_topology.item())
             running["loss_gate"] += float(loss_gate.item())
             running["graph_weight"] += float(graph_weight_mean.item())
             running["steps"] += 1
 
         steps = max(running["steps"], 1)
-        for k in ["loss_total", "loss_cls", "loss_txt", "loss_node", "loss_topo", "loss_gate", "graph_weight"]:
+        for k in [
+            "loss_total",
+            "loss_cls",
+            "loss_txt",
+            "loss_concept",
+            "loss_node",
+            "loss_topo",
+            "loss_text_topology",
+            "loss_gate",
+            "graph_weight",
+        ]:
             running[k] /= steps
 
         # ===== Evaluate on target(test) =====
@@ -857,7 +1130,9 @@ def train_one_split(cfg):
         print(
             f"[{_ts()}] [Epoch {epoch:03d}] {mode_str} "
             f"train(loss={running['loss_total']:.4f}, cls={running['loss_cls']:.4f}, "
-            f"txt={running['loss_txt']:.4f}, node={running['loss_node']:.4f}, topo={running['loss_topo']:.4f}, "
+            f"txt={running['loss_txt']:.4f}, concept={running['loss_concept']:.4f}, "
+            f"node={running['loss_node']:.4f}, topo={running['loss_topo']:.4f}, "
+            f"text_topo={running['loss_text_topology']:.4f}, "
             f"gate={running['loss_gate']:.4f}, graph_w={running['graph_weight']:.3f}) | "
             f"tgt(acc={tgt_metrics['acc']:.4f}, auc={tgt_metrics['auc']:.4f}) | "
             f"best={best_metric:.4f}"
@@ -892,18 +1167,19 @@ def load_and_eval(cfg, ckpt_path: str):
 
     text_mode = getattr(cfg.data, "text_mode", "sentence_pt")
     text_use_graph_structure = bool(getattr(cfg.data, "text_use_graph_structure", False))
-    if text_use_graph_structure and text_mode != "hierarchy_graph":
-        raise ValueError("text_use_graph_structure=True requires text_mode='hierarchy_graph'.")
+    if text_use_graph_structure and not _graph_mode_uses_structure(text_mode):
+        raise ValueError("text_use_graph_structure=True requires text_mode='hierarchy_graph' or 'concept_graph'.")
+    use_section_title_embedding = bool(getattr(cfg.model, "use_section_title_embedding", False))
 
     pool_txt = None
     text_graph_encoder = None
     hier_text_branch = None
     dual_text_fusion = None
-    if text_mode == "hierarchy_graph" and text_use_graph_structure:
+    if _graph_mode_uses_structure(text_mode) and text_use_graph_structure:
         text_graph_encoder = TextHierarchyGraphEncoder(
             dim=cfg.model.feat_dim,
-            num_node_types=3,
-            num_base_relations=2,
+            num_node_types=_text_graph_num_node_types(cfg),
+            num_base_relations=_text_graph_num_base_relations(cfg),
             num_layers=cfg.model.text_graph_layers,
             dropout=cfg.model.text_graph_dropout,
             use_next_edges=cfg.model.text_graph_use_next_edges,
@@ -922,6 +1198,8 @@ def load_and_eval(cfg, ckpt_path: str):
                 sentence_local_layers=cfg.model.sentence_local_layers,
                 sentence_local_heads=cfg.model.sentence_local_heads,
                 readout_attention_init=cfg.model.hier_readout_attention_init,
+                use_section_title_embedding=use_section_title_embedding,
+                num_section_title_types=_num_section_title_types_from_cfg(cfg),
             ).to(device)
             dual_text_fusion = DualTextFusion(
                 dim=cfg.model.feat_dim,

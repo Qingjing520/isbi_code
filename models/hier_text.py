@@ -82,10 +82,18 @@ class HierarchicalReadout(nn.Module):
         hidden: int = 256,
         dropout: float = 0.1,
         attention_init: float = -0.5,
+        use_section_title_embedding: bool = False,
+        num_section_title_types: int = 0,
     ):
         super().__init__()
         self.section_pool = ScalarAttentionPool(dim=dim, hidden=hidden, dropout=dropout)
         self.document_pool = ScalarAttentionPool(dim=dim, hidden=hidden, dropout=dropout)
+        self.use_section_title_embedding = bool(use_section_title_embedding)
+        self.section_title_embedding = (
+            nn.Embedding(num_section_title_types, dim)
+            if self.use_section_title_embedding and num_section_title_types > 0
+            else None
+        )
         # Attention can be sharp on noisy pathology sections, so mix it with a mean-pooling fallback.
         self.section_attention_mix_logit = nn.Parameter(torch.tensor(float(attention_init)))
         self.document_attention_mix_logit = nn.Parameter(torch.tensor(float(attention_init)))
@@ -103,6 +111,7 @@ class HierarchicalReadout(nn.Module):
         self,
         sentence_nodes: torch.Tensor,
         section_spans: torch.Tensor,
+        section_title_ids: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, dict]:
         if sentence_nodes.dim() != 2:
             raise ValueError(f"Expected [N, D] sentence nodes, got shape {tuple(sentence_nodes.shape)}")
@@ -122,6 +131,7 @@ class HierarchicalReadout(nn.Module):
                 "document_section_attn": doc_attn,
                 "section_attention_mix": torch.sigmoid(self.section_attention_mix_logit).detach(),
                 "document_attention_mix": doc_mix.detach(),
+                "section_title_embedding_used": False,
             }
 
         for start_end in section_spans.tolist():
@@ -150,9 +160,27 @@ class HierarchicalReadout(nn.Module):
                 "document_section_attn": doc_attn,
                 "section_attention_mix": torch.sigmoid(self.section_attention_mix_logit).detach(),
                 "document_attention_mix": doc_mix.detach(),
+                "section_title_embedding_used": False,
             }
 
         section_tensor = torch.stack(section_vecs, dim=0)
+        section_title_used = False
+        if self.section_title_embedding is not None and section_title_ids is not None and section_title_ids.numel() > 0:
+            title_ids = section_title_ids.to(device=section_tensor.device, dtype=torch.long).view(-1)
+            if title_ids.numel() < section_tensor.shape[0]:
+                title_ids = torch.cat(
+                    [
+                        title_ids,
+                        title_ids.new_zeros(section_tensor.shape[0] - title_ids.numel()),
+                    ],
+                    dim=0,
+                )
+            title_ids = title_ids[: section_tensor.shape[0]].clamp(
+                min=0,
+                max=self.section_title_embedding.num_embeddings - 1,
+            )
+            section_tensor = section_tensor + self.section_title_embedding(title_ids)
+            section_title_used = True
         pooled_doc, doc_attn = self.document_pool(section_tensor)
         pooled_doc, doc_mix = self._mix_attention_with_mean(
             attention_vec=pooled_doc,
@@ -164,6 +192,7 @@ class HierarchicalReadout(nn.Module):
             "document_section_attn": doc_attn,
             "section_attention_mix": torch.sigmoid(self.section_attention_mix_logit).detach(),
             "document_attention_mix": doc_mix.detach(),
+            "section_title_embedding_used": section_title_used,
         }
 
 
@@ -200,6 +229,8 @@ class HierTextBranch(nn.Module):
         sentence_local_layers: int = 1,
         sentence_local_heads: int = 8,
         readout_attention_init: float = -0.5,
+        use_section_title_embedding: bool = False,
+        num_section_title_types: int = 0,
     ):
         super().__init__()
         self.local_encoder = SentenceLocalEncoder(
@@ -213,16 +244,20 @@ class HierTextBranch(nn.Module):
             hidden=hidden,
             dropout=dropout,
             attention_init=readout_attention_init,
+            use_section_title_embedding=use_section_title_embedding,
+            num_section_title_types=num_section_title_types,
         )
 
     def forward(
         self,
         sentence_features: torch.Tensor,
         section_spans: torch.Tensor,
+        section_title_ids: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, dict]:
         sentence_nodes = self.local_encoder(sentence_features)
         section_vecs, document_vec, analysis = self.readout(
             sentence_nodes=sentence_nodes,
             section_spans=section_spans,
+            section_title_ids=section_title_ids,
         )
         return sentence_nodes, section_vecs, document_vec, analysis

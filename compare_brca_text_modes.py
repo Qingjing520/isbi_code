@@ -55,6 +55,21 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--image_dir", type=str, default=str(DEFAULT_IMAGE_DIR))
     ap.add_argument("--sentence_text_dir", type=str, default=str(DEFAULT_SENTENCE_TEXT_DIR))
     ap.add_argument("--hierarchy_text_dir", type=str, default=str(DEFAULT_HIERARCHY_TEXT_DIR))
+    ap.add_argument(
+        "--graph_manifest_csv",
+        type=str,
+        default="",
+        help="Optional graph manifest CSV used when mode=hierarchy_graph.",
+    )
+    ap.add_argument(
+        "--graph_manifest_template",
+        type=str,
+        default="",
+        help=(
+            "Optional format string for split-specific graph manifests, "
+            "for example ...\\brca_concept_graph_manifest_split{split_idx}.csv"
+        ),
+    )
     ap.add_argument("--output_dir", type=str, default=str(DEFAULT_OUTPUT_DIR))
     ap.add_argument(
         "--reuse_sentence_exp_root",
@@ -169,6 +184,18 @@ def _mode_cfg(base_cfg: Any, args: argparse.Namespace, split_idx: int, mode_name
         args.hierarchy_feature if mode_name == "hierarchy_graph" else "node_features"
     )
     cfg.data.text_use_graph_structure = bool(args.use_graph_structure and mode_name == "hierarchy_graph")
+    graph_manifest_csv = ""
+    if mode_name == "hierarchy_graph":
+        if str(args.graph_manifest_template).strip():
+            dataset_name = _infer_dataset_name(args)
+            graph_manifest_csv = str(args.graph_manifest_template).format(
+                split_idx=split_idx,
+                dataset=dataset_name,
+                dataset_lower=dataset_name.lower(),
+            )
+        elif str(args.graph_manifest_csv).strip():
+            graph_manifest_csv = str(args.graph_manifest_csv)
+    cfg.data.graph_manifest_csv = os.path.abspath(graph_manifest_csv) if graph_manifest_csv else ""
     cfg.model.text_graph_use_next_edges = not bool(args.disable_next_edges)
     cfg.train.num_workers = int(args.train_num_workers)
     if mode_name == "sentence_pt" and str(args.reuse_sentence_exp_root).strip():

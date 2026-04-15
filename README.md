@@ -9,6 +9,7 @@
 
 - 论文原始句子级文本特征
 - 当前新增的 `Document -> Section -> Sentence` 层次图文本特征
+- 可选的 `Document -> Section -> Sentence -> Concept` concept-enhanced 图文本特征
 
 ## 1. 项目结构
 
@@ -27,7 +28,7 @@
 
 ## 2. 当前训练输入
 
-当前训练代码支持两种文本输入模式。
+当前训练代码支持四种文本输入模式。
 
 ### `sentence_pt`
 
@@ -67,6 +68,17 @@
 - 当前训练代码已经可以读取这些层次图 `.pt`
 - 但目前主要是把选定的特征张量当作文本输入序列使用
 - 还没有显式利用 `edge_index / edge_type` 做真正的图神经网络学习
+
+### `concept_graph`
+
+在 `hierarchy_graph` 基础上继续扩展 concept 节点和 ontology-aware 边。  
+这一模式面向 `Document -> Section -> Sentence -> Concept` 的混合文本图，推荐与：
+
+- `text_use_graph_structure: true`
+- `model.text_graph_num_node_types: 0`（自动推断）
+- `model.text_graph_num_base_relations: 0`（自动推断）
+
+一起使用。
 
 ## 3. 标签与划分
 
@@ -197,7 +209,7 @@ git push
 ## 9. 备注
 
 当前代码已经兼容“句子文本特征”和“层次图文本特征”两种输入。  
-如果后续要真正发挥层次图优势，下一步应考虑让训练代码显式使用：
+如果后续要真正发挥层次图 / concept graph 优势，下一步应考虑让训练代码显式使用：
 
 - `edge_index`
 - `edge_type`

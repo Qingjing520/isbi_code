@@ -24,7 +24,6 @@ import torch
 import torch.nn.functional as F
 
 from config.config import get_path, get_stage_config, get_value, load_yaml_config
-from pdf_utils import ensure_dir, write_json
 
 
 LOGGER = logging.getLogger("encode_sentence_exports_conch")
@@ -46,6 +45,15 @@ DEFAULT_CONCH_OUTPUT_SUBDIRS = {
     "no_diagnosis_masked": "sentence_embeddings_conch_no_diagnosis_masked",
     "full": "sentence_embeddings_conch_full",
 }
+
+
+def ensure_dir(path: Path) -> None:
+    Path(path).mkdir(parents=True, exist_ok=True)
+
+
+def write_json(path: Path, payload: dict) -> None:
+    ensure_dir(path.parent)
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
 def iter_sentence_jsons(input_dir: Path) -> list[Path]:

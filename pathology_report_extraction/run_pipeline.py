@@ -7,45 +7,43 @@ in order:
 
 1. PDF preprocessing
 2. Sentence-view export
-3. CONCH sentence encoding
-4. Text hierarchy graph construction
+3. Optional ontology concept extraction
+4. CONCH sentence encoding
+5. Text hierarchy / concept graph construction
 """
 
 import argparse
+import json
 from pathlib import Path
 from typing import Any
 
-from build_text_hierarchy_graphs import (
-    process_all_documents as build_graphs,
-)
 from config.config import get_bool, get_path, get_stage_config, get_value, load_yaml_config
-from encode_sentence_exports_conch import (
-    DEFAULT_CONCH_CKPT_PATH,
-    DEFAULT_CONCH_REPO_DIR,
-    process_all_documents as encode_sentence_exports,
-)
-from export_sentence_views import process_all_documents as export_sentence_views
-from prepare_text_graph_manifest import (
-    DEFAULT_LABEL_CSV,
-    prepare_manifest,
-)
-from pdf_utils import write_json
-from preprocess_pathology_reports import (
-    DEFAULT_FILTER_MODE,
-    DEFAULT_INPUT_DIR,
-    DEFAULT_OUTPUT_ROOT,
-    DEFAULT_PREPROCESS_OUTPUT_SUBDIRS,
-    process_all_pdfs,
-)
-
-
 DEFAULT_PIPELINE_CONFIG = Path(__file__).resolve().parent / "config" / "pipeline.yaml"
+DEFAULT_FILTER_MODE = "masked"
+DEFAULT_INPUT_DIR = Path(r"D:\Tasks\Pathology Report")
+DEFAULT_OUTPUT_ROOT = Path(r"D:\Tasks\isbi_code\pathology_report_extraction\Output")
+DEFAULT_CONCH_REPO_DIR = Path(r"D:\Tasks\CLAM-master")
+DEFAULT_CONCH_CKPT_PATH = Path(r"D:\Tasks\CLAM-master\ckpts\pytorch_model.bin")
+DEFAULT_LABEL_CSV = Path(r"D:\Tasks\pathologic_stage.csv")
+DEFAULT_PREPROCESS_OUTPUT_SUBDIRS = {
+    "masked": "pathology_report_preprocessed_masked",
+    "no_diagnosis": "pathology_report_preprocessed_no_diagnosis",
+    "no_diagnosis_masked": "pathology_report_preprocessed_no_diagnosis_masked",
+    "full": "pathology_report_preprocessed_full",
+}
 
 DEFAULT_SENTENCE_EXPORT_OUTPUT_SUBDIRS = {
     "masked": "sentence_exports_masked",
     "no_diagnosis": "sentence_exports_no_diagnosis",
     "no_diagnosis_masked": "sentence_exports_no_diagnosis_masked",
     "full": "sentence_exports_full",
+}
+
+DEFAULT_CONCEPT_OUTPUT_SUBDIRS = {
+    "masked": "concept_annotations_masked",
+    "no_diagnosis": "concept_annotations_no_diagnosis",
+    "no_diagnosis_masked": "concept_annotations_no_diagnosis_masked",
+    "full": "concept_annotations_full",
 }
 
 DEFAULT_CONCH_OUTPUT_SUBDIRS = {
@@ -61,8 +59,19 @@ DEFAULT_GRAPH_OUTPUT_SUBDIRS = {
     "no_diagnosis_masked": "text_hierarchy_graphs_no_diagnosis_masked",
     "full": "text_hierarchy_graphs_full",
 }
+DEFAULT_CONCEPT_GRAPH_OUTPUT_SUBDIRS = {
+    "masked": "text_concept_graphs_masked",
+    "no_diagnosis": "text_concept_graphs_no_diagnosis",
+    "no_diagnosis_masked": "text_concept_graphs_no_diagnosis_masked",
+    "full": "text_concept_graphs_full",
+}
 
 DEFAULT_MANIFEST_OUTPUT_SUBDIR = "manifests"
+
+
+def write_json(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
 def _resolve_output_dir(
@@ -124,12 +133,14 @@ def run_pipeline(config_path_arg: Path | None, filter_mode_override: str | None,
 
     preprocess_block = raw_config.get("preprocess") if isinstance(raw_config.get("preprocess"), dict) else {}
     export_block = raw_config.get("export_sentence_views") if isinstance(raw_config.get("export_sentence_views"), dict) else {}
+    concept_block = raw_config.get("extract_ontology_concepts") if isinstance(raw_config.get("extract_ontology_concepts"), dict) else {}
     encode_block = raw_config.get("encode_sentence_exports_conch") if isinstance(raw_config.get("encode_sentence_exports_conch"), dict) else {}
     graph_block = raw_config.get("build_text_hierarchy_graphs") if isinstance(raw_config.get("build_text_hierarchy_graphs"), dict) else {}
     manifest_block = raw_config.get("prepare_text_graph_manifest") if isinstance(raw_config.get("prepare_text_graph_manifest"), dict) else {}
 
     preprocess_cfg = get_stage_config(raw_config, "preprocess")
     export_cfg = get_stage_config(raw_config, "export_sentence_views")
+    concept_cfg = get_stage_config(raw_config, "extract_ontology_concepts")
     encode_cfg = get_stage_config(raw_config, "encode_sentence_exports_conch")
     graph_cfg = get_stage_config(raw_config, "build_text_hierarchy_graphs")
     manifest_cfg = get_stage_config(raw_config, "prepare_text_graph_manifest")
@@ -159,6 +170,15 @@ def run_pipeline(config_path_arg: Path | None, filter_mode_override: str | None,
         default_subdirs=DEFAULT_SENTENCE_EXPORT_OUTPUT_SUBDIRS,
     )
 
+    concept_output_dir = _resolve_output_dir(
+        stage_block=concept_block,
+        stage_config=concept_cfg,
+        config_path=config_path,
+        output_root=output_root,
+        filter_mode=filter_mode,
+        default_subdirs=DEFAULT_CONCEPT_OUTPUT_SUBDIRS,
+    )
+
     encode_input_dir = get_path(encode_block, "input_dir", export_output_dir, config_path)
     encode_output_dir = _resolve_output_dir(
         stage_block=encode_block,
@@ -170,13 +190,14 @@ def run_pipeline(config_path_arg: Path | None, filter_mode_override: str | None,
     )
 
     graph_input_dir = get_path(graph_block, "input_dir", encode_output_dir, config_path)
+    graph_default_subdirs = DEFAULT_CONCEPT_GRAPH_OUTPUT_SUBDIRS if get_bool(graph_cfg, "attach_concepts", False) else DEFAULT_GRAPH_OUTPUT_SUBDIRS
     graph_output_dir = _resolve_output_dir(
         stage_block=graph_block,
         stage_config=graph_cfg,
         config_path=config_path,
         output_root=output_root,
         filter_mode=filter_mode,
-        default_subdirs=DEFAULT_GRAPH_OUTPUT_SUBDIRS,
+        default_subdirs=graph_default_subdirs,
     )
 
     manifest_output_dir = get_path(manifest_block, "output_dir", output_root / DEFAULT_MANIFEST_OUTPUT_SUBDIR, config_path)
@@ -192,6 +213,8 @@ def run_pipeline(config_path_arg: Path | None, filter_mode_override: str | None,
     }
 
     if get_bool(preprocess_cfg, "enabled", True):
+        from preprocess_pathology_reports import process_all_pdfs
+
         summary = process_all_pdfs(
             input_dir=preprocess_input_dir,
             output_dir=preprocess_output_dir,
@@ -215,6 +238,8 @@ def run_pipeline(config_path_arg: Path | None, filter_mode_override: str | None,
         }
 
     if get_bool(export_cfg, "enabled", True):
+        from export_sentence_views import process_all_documents as export_sentence_views
+
         summary = export_sentence_views(
             input_dir=export_input_dir,
             output_dir=export_output_dir,
@@ -235,7 +260,39 @@ def run_pipeline(config_path_arg: Path | None, filter_mode_override: str | None,
             "output_dir": str(export_output_dir),
         }
 
+    concept_input_dir = get_path(concept_block, "input_dir", export_output_dir, config_path)
+    if get_bool(concept_cfg, "enabled", False):
+        from extract_ontology_concepts import process_all_documents as extract_ontology_concepts
+
+        ontology_path = None
+        if get_value(concept_block, "ontology_path", None) not in (None, ""):
+            ontology_path = get_path(concept_block, "ontology_path", output_root, config_path)
+
+        summary = extract_ontology_concepts(
+            input_dir=concept_input_dir,
+            output_dir=concept_output_dir,
+            ontology_path=ontology_path,
+            include_true_path=get_bool(concept_cfg, "include_true_path", True),
+            default_ic=float(get_value(concept_cfg, "default_ic", 1.0)),
+            limit=limit if limit is not None else (None if get_value(concept_cfg, "limit", None) is None else int(get_value(concept_cfg, "limit", None))),
+        )
+        pipeline_summary["stages"]["extract_ontology_concepts"] = {
+            "enabled": True,
+            "input_dir": str(concept_input_dir),
+            "output_dir": str(concept_output_dir),
+            "summary_path": str(concept_output_dir / "run_summary.json"),
+            "result": summary,
+        }
+    else:
+        pipeline_summary["stages"]["extract_ontology_concepts"] = {
+            "enabled": False,
+            "input_dir": str(concept_input_dir),
+            "output_dir": str(concept_output_dir),
+        }
+
     if get_bool(encode_cfg, "enabled", True):
+        from encode_sentence_exports_conch import process_all_documents as encode_sentence_exports
+
         summary = encode_sentence_exports(
             input_dir=encode_input_dir,
             output_dir=encode_output_dir,
@@ -260,15 +317,24 @@ def run_pipeline(config_path_arg: Path | None, filter_mode_override: str | None,
         }
 
     if get_bool(graph_cfg, "enabled", True):
+        from build_text_hierarchy_graphs import process_all_documents as build_graphs
+
+        concept_dir = None
+        if get_bool(graph_cfg, "attach_concepts", False):
+            concept_dir = get_path(graph_block, "concept_dir", concept_output_dir, config_path)
         summary = build_graphs(
             input_dir=graph_input_dir,
             output_dir=graph_output_dir,
+            concept_dir=concept_dir,
+            attach_concepts=get_bool(graph_cfg, "attach_concepts", False),
+            add_concept_cooccurrence_edges=get_bool(graph_cfg, "add_concept_cooccurrence_edges", True),
             limit=limit if limit is not None else (None if get_value(graph_cfg, "limit", None) is None else int(get_value(graph_cfg, "limit", None))),
         )
         pipeline_summary["stages"]["build_text_hierarchy_graphs"] = {
             "enabled": True,
             "input_dir": str(graph_input_dir),
             "output_dir": str(graph_output_dir),
+            "concept_dir": str(concept_dir) if concept_dir is not None else None,
             "summary_path": str(graph_output_dir / "run_summary.json"),
             "result": summary,
         }
@@ -277,9 +343,14 @@ def run_pipeline(config_path_arg: Path | None, filter_mode_override: str | None,
             "enabled": False,
             "input_dir": str(graph_input_dir),
             "output_dir": str(graph_output_dir),
+            "concept_dir": str(get_path(graph_block, "concept_dir", concept_output_dir, config_path))
+            if get_bool(graph_cfg, "attach_concepts", False)
+            else None,
         }
 
     if get_bool(manifest_cfg, "enabled", False):
+        from prepare_text_graph_manifest import prepare_manifest
+
         manifest_output_name = get_value(manifest_cfg, "output_name", None)
         if manifest_output_name in (None, ""):
             manifest_output_csv = manifest_output_dir / f"text_graph_manifest_{filter_mode}.csv"

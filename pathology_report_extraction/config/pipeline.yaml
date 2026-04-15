@@ -4,16 +4,17 @@
 # 阶段顺序：
 # 1. preprocess
 # 2. export_sentence_views
-# 3. encode_sentence_exports_conch
-# 4. build_text_hierarchy_graphs
-# 5. prepare_text_graph_manifest（可选，默认关闭）
+# 3. extract_ontology_concepts（可选）
+# 4. encode_sentence_exports_conch
+# 5. build_text_hierarchy_graphs
+# 6. prepare_text_graph_manifest（可选，默认关闭）
 
 defaults:
   # 原始病理报告 PDF 根目录。
-  input_dir: D:\Tasks\Pathology Report
+  input_dir: F:\Tasks\Pathology Report
 
   # 统一输出根目录。所有阶段的结果都会写到这里。
-  output_root: D:\Tasks\isbi_code\pathology_report_extraction\Output
+  output_root: F:\Tasks\isbi_code\pathology_report_extraction\Output
 
   # 全局调试上限。留空表示全量运行。
   limit:
@@ -58,12 +59,38 @@ export_sentence_views:
     no_diagnosis_masked: sentence_exports_no_diagnosis_masked
     full: sentence_exports_full
 
+extract_ontology_concepts:
+  # 这一步默认打开。
+  # 当前默认使用 NCIt 作为主 ontology，为后续 concept graph 构建提供离线 concept annotation。
+  enabled: true
+
+  # 当前默认：使用已经转换好的 NCIt project ontology JSON。
+  ontology_path: F:\Tasks\Ontologies\pocessed\ncit_pathology_subset_ontology.json
+
+  # 是否展开 true-path，把 direct concept 的祖先概念一起写入 annotation。
+  include_true_path: true
+
+  # ontology 缺少 ic 时使用的默认值。
+  default_ic: 1.0
+
+  # 如果不手动指定 input_dir，就自动接上 sentence export 输出目录。
+  # input_dir:
+
+  # 如果不手动指定 output_dir，就自动使用：
+  # output_root + output_subdirs[当前 filter_mode]
+  # output_dir:
+  output_subdirs:
+    masked: concept_annotations_masked
+    no_diagnosis: concept_annotations_no_diagnosis
+    no_diagnosis_masked: concept_annotations_no_diagnosis_masked
+    full: concept_annotations_full
+
 encode_sentence_exports_conch:
   enabled: true
 
   # 本地 CONCH 仓库和权重文件路径。
-  conch_repo_dir: D:\Tasks\CLAM-master
-  checkpoint_path: D:\Tasks\CLAM-master\ckpts\pytorch_model.bin
+  conch_repo_dir: F:\Tasks\CLAM-master
+  checkpoint_path: F:\Tasks\CLAM-master\ckpts\pytorch_model.bin
 
   # 句子编码 batch size。
   batch_size: 64
@@ -86,6 +113,17 @@ encode_sentence_exports_conch:
 build_text_hierarchy_graphs:
   enabled: true
 
+  # 当前默认：打开 concept-enhanced graph
+  # Document -> Section -> Sentence -> Concept
+  attach_concepts: true
+
+  # concept annotation 目录。留空时默认接 extract_ontology_concepts 的输出目录。
+  # concept_dir:
+
+  # true: 添加 concept-concept 的同句 / 同 section 共现边
+  # false: 只保留 mention + ontology 边
+  add_concept_cooccurrence_edges: true
+
   # 如果不手动指定 input_dir，就自动接上 CONCH 编码输出目录。
   # input_dir:
 
@@ -93,10 +131,10 @@ build_text_hierarchy_graphs:
   # output_root + output_subdirs[当前 filter_mode]
   # output_dir:
   output_subdirs:
-    masked: text_hierarchy_graphs_masked
-    no_diagnosis: text_hierarchy_graphs_no_diagnosis
-    no_diagnosis_masked: text_hierarchy_graphs_no_diagnosis_masked
-    full: text_hierarchy_graphs_full
+    masked: text_concept_graphs_masked
+    no_diagnosis: text_concept_graphs_no_diagnosis
+    no_diagnosis_masked: text_concept_graphs_no_diagnosis_masked
+    full: text_concept_graphs_full
 
 prepare_text_graph_manifest:
   # 这一步默认关闭。
@@ -104,7 +142,7 @@ prepare_text_graph_manifest:
   enabled: false
 
   # 分期标签文件。需要包含 case_id, slide_id, label 三列。
-  label_csv: D:\Tasks\pathologic_stage.csv
+  label_csv: F:\Tasks\pathologic_stage.csv
 
   # 可选的 split 文件。
   # 支持：

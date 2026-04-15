@@ -19,6 +19,7 @@ class DataConfig:
     text_use_graph_structure: bool = False
     sentence_text_dir: str = ""
     graph_text_dir: str = ""
+    graph_manifest_csv: str = ""
 
 
 @dataclass
@@ -53,19 +54,25 @@ class ModelConfig:
     text_graph_layers: int = 1
     text_graph_dropout: float = 0.05
     text_graph_use_next_edges: bool = True
+    text_graph_num_node_types: int = 0
+    text_graph_num_base_relations: int = 0
     sentence_local_layers: int = 1
     sentence_local_heads: int = 8
     hier_readout_hidden: int = 256
     hier_readout_dropout: float = 0.10
     hier_readout_attention_init: float = -0.5
+    use_section_title_embedding: bool = False
+    section_title_vocab: List[str] = None
     text_dual_fusion_dropout: float = 0.10
 
 
 @dataclass
 class LossConfig:
     alpha_txt: float = 0.5
+    alpha_concept: float = 0.0
     beta_node: float = 0.1
     gamma_topo: float = 0.1
+    gamma_text_topology: float = 0.0
     dual_text_gate_reg_weight: float = 0.0
     dual_text_graph_weight_target: float = 0.2
 
@@ -143,6 +150,7 @@ def get_config(path: str) -> Config:
             text_use_graph_structure=bool(data.get("text_use_graph_structure", False)),
             sentence_text_dir=_expand(data.get("sentence_text_dir", data.get("text_dir", ""))),
             graph_text_dir=_expand(data.get("graph_text_dir", data.get("text_dir", ""))),
+            graph_manifest_csv=_expand(data.get("graph_manifest_csv", "")),
         ),
         graph=GraphConfig(
             num_nodes_m=int(graph.get("num_nodes_m", 64)),
@@ -168,17 +176,41 @@ def get_config(path: str) -> Config:
             text_graph_layers=int(model.get("text_graph_layers", 1)),
             text_graph_dropout=float(model.get("text_graph_dropout", 0.05)),
             text_graph_use_next_edges=bool(model.get("text_graph_use_next_edges", True)),
+            text_graph_num_node_types=int(model.get("text_graph_num_node_types", 0)),
+            text_graph_num_base_relations=int(model.get("text_graph_num_base_relations", 0)),
             sentence_local_layers=int(model.get("sentence_local_layers", 1)),
             sentence_local_heads=int(model.get("sentence_local_heads", 8)),
             hier_readout_hidden=int(model.get("hier_readout_hidden", 256)),
             hier_readout_dropout=float(model.get("hier_readout_dropout", 0.10)),
             hier_readout_attention_init=float(model.get("hier_readout_attention_init", -0.5)),
+            use_section_title_embedding=bool(model.get("use_section_title_embedding", False)),
+            section_title_vocab=model.get(
+                "section_title_vocab",
+                [
+                    "Document Body",
+                    "Diagnosis",
+                    "Final Diagnosis",
+                    "Gross Description",
+                    "Microscopic Description",
+                    "Comment",
+                    "Clinical Information",
+                    "Specimen Submitted",
+                    "Synoptic Report",
+                    "Procedure",
+                    "Ancillary Studies",
+                    "Patient History",
+                    "Summary of Sections",
+                    "Intraoperative Consultation",
+                ],
+            ),
             text_dual_fusion_dropout=float(model.get("text_dual_fusion_dropout", 0.10)),
         ),
         loss=LossConfig(
             alpha_txt=float(loss.get("alpha_txt", 0.5)),
+            alpha_concept=float(loss.get("alpha_concept", 0.0)),
             beta_node=float(loss.get("beta_node", 0.1)),
             gamma_topo=float(loss.get("gamma_topo", 0.1)),
+            gamma_text_topology=float(loss.get("gamma_text_topology", 0.0)),
             dual_text_gate_reg_weight=float(loss.get("dual_text_gate_reg_weight", 0.0)),
             dual_text_graph_weight_target=float(loss.get("dual_text_graph_weight_target", 0.2)),
             mmd_num_kernels=int(loss.get("mmd_num_kernels", 3)),

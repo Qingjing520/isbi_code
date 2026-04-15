@@ -1,7 +1,8 @@
 from __future__ import annotations
 import os
 import re
-from typing import List, Tuple
+from pathlib import Path
+from typing import Any, List, Tuple
 import pandas as pd
 import torch
 from torch.utils.data import Dataset, DataLoader
@@ -36,6 +37,45 @@ def _build_text_index(text_dir: str) -> tuple[dict[str, str], dict[str, list[str
     return exact_index, case_index
 
 
+def _manifest_value(value: Any) -> str:
+    if value is None or pd.isna(value):
+        return ""
+    return str(value).strip()
+
+
+def _read_graph_manifest_rows(manifest_csv: str) -> list[dict[str, Any]]:
+    manifest_path = Path(manifest_csv)
+    if not manifest_path.exists():
+        raise FileNotFoundError(f"Graph manifest CSV not found: {manifest_path}")
+
+    manifest_df = pd.read_csv(manifest_path)
+    required = {"case_id", "slide_id", "label", "split", "graph_pt"}
+    if not required.issubset(set(manifest_df.columns)):
+        raise ValueError(
+            f"Graph manifest must contain columns {required}. Got: {set(manifest_df.columns)}"
+        )
+
+    rows: list[dict[str, Any]] = []
+    for _, row in manifest_df.iterrows():
+        slide_id = _manifest_value(row.get("slide_id"))
+        graph_pt = _manifest_value(row.get("graph_pt"))
+        label_raw = row.get("label")
+        if not slide_id or not graph_pt or pd.isna(label_raw):
+            continue
+        case_id = _manifest_value(row.get("case_id")) or _extract_case_id(slide_id)
+        rows.append(
+            {
+                "case_id": case_id,
+                "slide_id": slide_id,
+                "label": int(label_raw),
+                "split": _manifest_value(row.get("split")),
+                "graph_pt": graph_pt,
+                "image_pt": _manifest_value(row.get("image_pt")),
+            }
+        )
+    return rows
+
+
 class MultiModalFeatureDataset(Dataset):
 
     def __init__(
@@ -50,6 +90,7 @@ class MultiModalFeatureDataset(Dataset):
         sentence_text_dir: str = "",
         graph_text_dir: str = "",
         mode: str = "train",
+        graph_manifest_csv: str = "",
     ):
         assert mode in ["train", "val", "test"]
         self.image_dir = image_dir
@@ -59,13 +100,25 @@ class MultiModalFeatureDataset(Dataset):
         self.text_use_graph_structure = text_use_graph_structure
         self.sentence_text_dir = sentence_text_dir or text_dir
         self.graph_text_dir = graph_text_dir or text_dir
+        self.graph_manifest_csv = graph_manifest_csv
 
-        valid_text_modes = {"sentence_pt", "hierarchy_graph", "dual_text"}
+        valid_text_modes = {"sentence_pt", "hierarchy_graph", "dual_text", "concept_graph"}
         if self.text_mode not in valid_text_modes:
             raise ValueError(f"text_mode must be one of {sorted(valid_text_modes)}. Got: {self.text_mode}")
 
-        self._text_exact_index, self._text_case_index = _build_text_index(text_dir)
-        self._graph_exact_index, self._graph_case_index = _build_text_index(self.graph_text_dir)
+        self._text_exact_index: dict[str, str] = {}
+        self._text_case_index: dict[str, list[str]] = {}
+        self._graph_exact_index: dict[str, str] = {}
+        self._graph_case_index: dict[str, list[str]] = {}
+
+        if self.text_mode in {"hierarchy_graph", "concept_graph"} and not self._use_graph_manifest():
+            self._text_exact_index, self._text_case_index = _build_text_index(text_dir)
+        if self.text_mode == "dual_text" and not self._use_graph_manifest():
+            self._graph_exact_index, self._graph_case_index = _build_text_index(self.graph_text_dir)
+
+        if self._use_graph_manifest():
+            self.samples = self._load_samples_from_graph_manifest(mode)
+            return
 
         split_df = pd.read_csv(split_csv)
         if mode not in split_df.columns:
@@ -99,6 +152,37 @@ class MultiModalFeatureDataset(Dataset):
             if label is None:
                 continue
             self.samples.append((image_path, text_ref, label, slide_id))
+
+    def _use_graph_manifest(self) -> bool:
+        return bool(str(self.graph_manifest_csv).strip()) and self.text_mode in {
+            "hierarchy_graph",
+            "concept_graph",
+            "dual_text",
+        }
+
+    def _load_samples_from_graph_manifest(self, mode: str) -> List[Tuple[str, object, int, str]]:
+        samples: List[Tuple[str, object, int, str]] = []
+        for row in _read_graph_manifest_rows(self.graph_manifest_csv):
+            if row["split"] != mode:
+                continue
+
+            case_id = row["case_id"]
+            slide_id = row["slide_id"]
+            graph_path = row["graph_pt"]
+            image_path = row["image_pt"] or os.path.join(self.image_dir, f"{slide_id}.pt")
+
+            if self.text_mode == "dual_text":
+                sentence_path = os.path.join(self.sentence_text_dir, f"{case_id}.pt")
+                if not (os.path.exists(image_path) and os.path.exists(sentence_path) and os.path.exists(graph_path)):
+                    continue
+                text_ref: object = {"sentence_path": sentence_path, "graph_path": graph_path}
+            else:
+                if not (os.path.exists(image_path) and os.path.exists(graph_path)):
+                    continue
+                text_ref = graph_path
+
+            samples.append((image_path, text_ref, int(row["label"]), slide_id))
+        return samples
 
     def _resolve_text_path(self, slide_id: str, case_id: str) -> str:
         if self.text_mode == "sentence_pt":
@@ -159,7 +243,7 @@ class MultiModalFeatureDataset(Dataset):
                 text_feat = text_payload    # [N, 512]
             else:
                 if not isinstance(text_payload, dict):
-                    raise TypeError(f"Expected a dict graph payload for hierarchy_graph mode: {text_path}")
+                    raise TypeError(f"Expected a dict graph payload for {self.text_mode} mode: {text_path}")
                 if self.text_use_graph_structure:
                     text_feat = text_payload
                 else:
@@ -192,6 +276,7 @@ def get_dataloaders(cfg):
         sentence_text_dir=getattr(cfg.data, "sentence_text_dir", ""),
         graph_text_dir=getattr(cfg.data, "graph_text_dir", ""),
         mode="train",
+        graph_manifest_csv=getattr(cfg.data, "graph_manifest_csv", ""),
     )
     # val_set = MultiModalFeatureDataset(
     #     cfg.data.split_file, cfg.data.label_file, cfg.data.image_dir, cfg.data.text_dir, mode="val"
@@ -207,6 +292,7 @@ def get_dataloaders(cfg):
         sentence_text_dir=getattr(cfg.data, "sentence_text_dir", ""),
         graph_text_dir=getattr(cfg.data, "graph_text_dir", ""),
         mode="test",
+        graph_manifest_csv=getattr(cfg.data, "graph_manifest_csv", ""),
     )
 
     train_loader = DataLoader(
