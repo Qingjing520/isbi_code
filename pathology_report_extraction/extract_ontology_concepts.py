@@ -184,6 +184,18 @@ PATHOLOGY_SINGLE_TOKEN_WHITELIST = {
     "nodal",
     "node",
 }
+PATHOLOGY_SINGLE_TOKEN_ABBREVIATIONS = {
+    "ccrcc",
+    "chrcc",
+    "dcis",
+    "her2",
+    "idc",
+    "ilc",
+    "lcis",
+    "prcc",
+    "rcc",
+    "tnm",
+}
 TRUE_PATH_ANCESTOR_EXACT_EXCLUDE_NAMES = {
     "action",
     "activity",
@@ -492,26 +504,96 @@ def _compile_term_pattern(term: str) -> re.Pattern[str]:
     return re.compile(rf"(?<!\w){escaped}(?!\w)", flags=re.IGNORECASE)
 
 
+def _synonym_term(value: Any) -> str:
+    if isinstance(value, dict):
+        for key in ("term", "text", "label", "value"):
+            token = str(value.get(key) or "").strip()
+            if token:
+                return token
+        return ""
+    return str(value or "").strip()
+
+
 def _coerce_concept_record(concept_id: str, record: dict[str, Any], default_ic: float) -> dict[str, Any]:
     name = str(record.get("name") or concept_id).strip()
+    source_terminology = str(record.get("source_terminology") or "").strip()
+    canonical_source = str(record.get("canonical_source") or source_terminology).strip()
     synonyms = list(record.get("synonyms") or [])
+    synonym_records = list(record.get("synonym_records") or [])
     normalized_synonyms = []
     seen_synonyms: set[str] = set()
-    for term in [name, *synonyms]:
+    normalized_synonym_records: list[dict[str, Any]] = []
+    seen_synonym_records: set[tuple[str, str, str, str, str]] = set()
+
+    for item in synonym_records:
+        term = _synonym_term(item)
         normalized = _normalize_phrase(term)
+        if not normalized:
+            continue
+        if normalized not in seen_synonyms:
+            seen_synonyms.add(normalized)
+            normalized_synonyms.append(str(term).strip())
+
+        if not isinstance(item, dict) or not term:
+            continue
+        item_source_terminology = str(item.get("source_terminology") or source_terminology).strip()
+        item_source_id = str(item.get("source_id") or concept_id).strip()
+        item_origin = str(item.get("origin") or "ontology_synonym").strip()
+        item_umls_cui = str(item.get("umls_cui") or "").strip()
+        key = (normalized, item_source_terminology, item_source_id, item_origin, item_umls_cui)
+        if key in seen_synonym_records:
+            continue
+        seen_synonym_records.add(key)
+        normalized_synonym_records.append(
+            {
+                "term": term,
+                "source_terminology": item_source_terminology,
+                "source_id": item_source_id,
+                "origin": item_origin,
+                **({"umls_cui": item_umls_cui} if item_umls_cui else {}),
+            }
+        )
+
+    for term in [name, *synonyms]:
+        token = _synonym_term(term)
+        normalized = _normalize_phrase(token)
         if not normalized or normalized in seen_synonyms:
             continue
         seen_synonyms.add(normalized)
-        normalized_synonyms.append(str(term).strip())
+        normalized_synonyms.append(token)
+        key = (normalized, source_terminology, concept_id, "ontology_synonym", "")
+        if key in seen_synonym_records:
+            continue
+        seen_synonym_records.add(key)
+        normalized_synonym_records.append(
+            {
+                "term": token,
+                "source_terminology": source_terminology,
+                "source_id": concept_id,
+                "origin": "ontology_synonym",
+            }
+        )
 
     parents = [str(parent).strip() for parent in record.get("parents", []) if str(parent).strip()]
-    return {
+    coerced = {
         "id": concept_id,
         "name": name,
         "synonyms": normalized_synonyms,
+        "synonym_records": normalized_synonym_records,
         "parents": parents,
         "ic": float(record.get("ic", default_ic)),
+        "xrefs": dict(record.get("xrefs", {}) or {}),
+        "source_terminology": source_terminology,
+        "canonical_source": canonical_source,
+        "aligned_sources": list(record.get("aligned_sources", []) or []),
+        "match_enabled": bool(record.get("match_enabled", True)),
+        "definition": str(record.get("definition") or ""),
+        "normalization_role": str(record.get("normalization_role") or ""),
     }
+    for key, value in record.items():
+        if key not in coerced:
+            coerced[key] = value
+    return coerced
 
 
 def load_ontology_concepts(ontology_path: Path | None, default_ic: float) -> dict[str, dict[str, Any]]:
@@ -582,6 +664,8 @@ def _is_usable_synonym(term: str, concept_name: str) -> bool:
 
     if len(term_tokens) == 1:
         token = term_tokens[0]
+        if token in PATHOLOGY_SINGLE_TOKEN_ABBREVIATIONS:
+            return concept_relevant
         if token in PATHOLOGY_SINGLE_TOKEN_WHITELIST:
             return len(concept_name_tokens) == 1
         if token in GENERIC_TERM_STOPWORDS:
@@ -605,6 +689,17 @@ def _concept_match_priority(phrase_tokens: tuple[str, ...], concept_name: str) -
     return (blocked_name, exact_name_match, phrase_in_name, token_count, normalized_name)
 
 
+def _concept_source_priority(concept: dict[str, Any]) -> int:
+    source = str(concept.get("canonical_source") or concept.get("source_terminology") or "").strip().lower()
+    if source == "ncit":
+        return 0
+    if source == "do":
+        return 1
+    if source in {"snomedct", "snomed ct"}:
+        return 2
+    return 9
+
+
 def compile_match_catalog(ontology: dict[str, dict[str, Any]]) -> dict[str, Any]:
     phrase_index: dict[tuple[str, ...], list[dict[str, Any]]] = {}
     term_lengths: set[int] = set()
@@ -612,15 +707,20 @@ def compile_match_catalog(ontology: dict[str, dict[str, Any]]) -> dict[str, Any]
     retained_concept_count = 0
 
     for concept_id, concept in ontology.items():
+        if not bool(concept.get("match_enabled", True)):
+            continue
         concept_name = concept["name"]
         if not _concept_is_domain_relevant(concept_name):
             continue
         retained_concept_count += 1
-        synonyms = concept.get("synonyms", []) or []
-        if not synonyms:
+        synonym_records = list(concept.get("synonym_records", []) or [])
+        if not synonym_records:
+            synonym_records = [{"term": term, "source_terminology": concept.get("source_terminology", ""), "source_id": concept_id, "origin": "ontology_synonym"} for term in concept.get("synonyms", []) or []]
+        if not synonym_records:
             continue
         seen_phrases: set[tuple[str, ...]] = set()
-        for synonym in synonyms:
+        for synonym_record in synonym_records:
+            synonym = _synonym_term(synonym_record)
             if not _is_usable_synonym(synonym, concept_name):
                 continue
             phrase_tokens = _normalized_tokens(synonym)
@@ -636,6 +736,10 @@ def compile_match_catalog(ontology: dict[str, dict[str, Any]]) -> dict[str, Any]
                     "parents": list(concept.get("parents", []) or []),
                     "ic": float(concept.get("ic", 0.0)),
                     "matched_term": synonym,
+                    "matched_source_terminology": str(synonym_record.get("source_terminology") or concept.get("source_terminology") or ""),
+                    "matched_source_id": str(synonym_record.get("source_id") or concept_id),
+                    "matched_origin": str(synonym_record.get("origin") or "ontology_synonym"),
+                    "source_priority": _concept_source_priority(concept),
                 }
             )
 
@@ -643,6 +747,7 @@ def compile_match_catalog(ontology: dict[str, dict[str, Any]]) -> dict[str, Any]
         matches.sort(
             key=lambda item: (
                 *_concept_match_priority(phrase_tokens, item["concept_name"]),
+                item["source_priority"],
                 item["concept_id"],
             )
         )
@@ -742,6 +847,9 @@ def _find_sentence_mentions(
                     "concept_id": best_item["concept_id"],
                     "concept_name": best_item["concept_name"],
                     "matched_term": best_item["matched_term"],
+                    "matched_source_terminology": best_item["matched_source_terminology"],
+                    "matched_source_id": best_item["matched_source_id"],
+                    "matched_origin": best_item["matched_origin"],
                     "mention_text": mention_text,
                     "start_char": start_char,
                     "end_char": end_char,
@@ -781,6 +889,13 @@ def _get_or_create_concept_summary(
         "parents": list(ontology_record.get("parents", []) or []),
         "ic": float(ontology_record.get("ic", 0.0)),
         "depth": int(depths.get(concept_id, 0)),
+        "xrefs": dict(ontology_record.get("xrefs", {}) or {}),
+        "source_terminology": str(ontology_record.get("source_terminology") or ""),
+        "canonical_source": str(ontology_record.get("canonical_source") or ontology_record.get("source_terminology") or ""),
+        "aligned_sources": list(ontology_record.get("aligned_sources", []) or []),
+        "match_enabled": bool(ontology_record.get("match_enabled", True)),
+        "definition": str(ontology_record.get("definition") or ""),
+        "normalization_role": str(ontology_record.get("normalization_role") or ""),
         "sentence_indices": set(),
         "section_indices": set(),
         "matched_terms": set(),
@@ -884,6 +999,13 @@ def build_concept_annotation(
                 "parents": list(entry.get("parents", [])),
                 "depth": int(entry["depth"]),
                 "ic": float(entry["ic"]),
+                "xrefs": dict(entry.get("xrefs", {}) or {}),
+                "source_terminology": entry.get("source_terminology", ""),
+                "canonical_source": entry.get("canonical_source", ""),
+                "aligned_sources": list(entry.get("aligned_sources", []) or []),
+                "match_enabled": bool(entry.get("match_enabled", True)),
+                "definition": entry.get("definition", ""),
+                "normalization_role": entry.get("normalization_role", ""),
                 "sentence_indices": sentence_indices,
                 "section_indices": section_indices,
                 "matched_terms": matched_terms,
