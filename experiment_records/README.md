@@ -10,6 +10,7 @@ This directory stores lightweight experiment summaries that are safe to version 
 - BRCA fair comparison on aligned splits 0-9: `brca_sentence_vs_dual_text_10splits/README.md`
 - BRCA dual_text gate-regularization ablation: `brca_dual_text_gate_reg_ablation/README.md`
 - Gate-regularization small grid on BRCA/KIRC aligned splits 0-2: `gate_reg_grid_3splits/README.md`
+- Sample-level dual_text benefit analysis: `dual_text_benefit_analysis/README.md`
 - KIRC fair comparison on aligned splits 0-9: `kirc_sentence_vs_dual_text_10splits/README.md`
 - KIRC dual_text readout_v2 10-split analysis: `kirc_dual_text_readout_v2_10splits/README.md`
 - KIRC dual_text gate-regularization ablation: `kirc_dual_text_gate_reg_ablation/README.md`

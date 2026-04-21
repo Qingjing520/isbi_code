@@ -1,0 +1,116 @@
+{
+  "dataset": "BRCA",
+  "splits": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9
+  ],
+  "sentence_exp_root": "D:\\Tasks\\isbi_code\\experiments\\brca_text_mode_comparison_5splits_node_features\\sentence_pt",
+  "dual_exp_root": "D:\\Tasks\\isbi_code\\experiments\\brca_dual_text_readout_v2_gate001_10splits",
+  "summary": {
+    "total_samples": 2050,
+    "group_counts": {
+      "benefited": 213,
+      "harmed": 217,
+      "both_correct": 1333,
+      "both_wrong": 287
+    },
+    "groups": {
+      "benefited": {
+        "n": 213,
+        "graph_branch_weight_mean": 0.2527968702321881,
+        "graph_branch_weight_std": 0.22534195913205735,
+        "top_section_attention_mean": 0.7234262942288403,
+        "top_section_attention_std": 0.2333730001657068,
+        "doc_attention_entropy_mean": 0.5512942597763454,
+        "doc_attention_entropy_std": 0.35276754755196416,
+        "top_section_counts": {
+          "Document Body": 81,
+          "Final Diagnosis": 65,
+          "Procedure": 15,
+          "Synoptic Report": 13,
+          "Gross Description": 12,
+          "Comment": 11,
+          "Ancillary Studies": 7,
+          "Microscopic Description": 4,
+          "Clinical Information": 3,
+          "Patient History": 2
+        }
+      },
+      "harmed": {
+        "n": 217,
+        "graph_branch_weight_mean": 0.19971534438122251,
+        "graph_branch_weight_std": 0.21732348895315803,
+        "top_section_attention_mean": 0.7164163687674131,
+        "top_section_attention_std": 0.2256718305170271,
+        "doc_attention_entropy_mean": 0.5704127505249931,
+        "doc_attention_entropy_std": 0.3552268026607803,
+        "top_section_counts": {
+          "Document Body": 81,
+          "Final Diagnosis": 62,
+          "Procedure": 21,
+          "Gross Description": 13,
+          "Comment": 13,
+          "Microscopic Description": 6,
+          "Synoptic Report": 6,
+          "Ancillary Studies": 6,
+          "Patient History": 5,
+          "Clinical Information": 4
+        }
+      },
+      "both_correct": {
+        "n": 1333,
+        "graph_branch_weight_mean": 0.2348416107249099,
+        "graph_branch_weight_std": 0.23678177525203947,
+        "top_section_attention_mean": 0.6645749311807544,
+        "top_section_attention_std": 0.24320685202168488,
+        "doc_attention_entropy_mean": 0.6048158042125152,
+        "doc_attention_entropy_std": 0.34706375449657223,
+        "top_section_counts": {
+          "Document Body": 496,
+          "Final Diagnosis": 338,
+          "Comment": 101,
+          "Synoptic Report": 88,
+          "Gross Description": 86,
+          "Procedure": 78,
+          "Microscopic Description": 64,
+          "Ancillary Studies": 39,
+          "Patient History": 23,
+          "Clinical Information": 13,
+          "RIJN TIME": 3,
+          "LYMPHOVASCULAR INVASION": 3,
+          "RUN ;ME": 1
+        }
+      },
+      "both_wrong": {
+        "n": 287,
+        "graph_branch_weight_mean": 0.2219528755763682,
+        "graph_branch_weight_std": 0.2263849436665732,
+        "top_section_attention_mean": 0.6686174982723874,
+        "top_section_attention_std": 0.24191880297755367,
+        "doc_attention_entropy_mean": 0.615870460765641,
+        "doc_attention_entropy_std": 0.3567244242642964,
+        "top_section_counts": {
+          "Document Body": 112,
+          "Final Diagnosis": 68,
+          "Procedure": 20,
+          "Synoptic Report": 17,
+          "Microscopic Description": 17,
+          "Gross Description": 17,
+          "Ancillary Studies": 15,
+          "Comment": 10,
+          "Patient History": 7,
+          "Clinical Information": 4
+        }
+      }
+    },
+    "benefit_minus_harm": -4
+  }
+}

@@ -65,7 +65,7 @@ extract_ontology_concepts:
   enabled: true
 
   # 当前默认：使用已经转换好的 NCIt project ontology JSON。
-  ontology_path: F:\Tasks\Ontologies\pocessed\ncit_pathology_subset_ontology.json
+  ontology_path: F:\Tasks\Ontologies\processed\oncology_multi_ontology_bundle.json
 
   # 是否展开 true-path，把 direct concept 的祖先概念一起写入 annotation。
   include_true_path: true
