@@ -47,8 +47,11 @@ experiments/
     sentence-hierarchical-graph-ontology/
 ```
 
-Each method directory contains `runs/` for split outputs/checkpoints and `records/`
-for summaries/logs. Do not create new top-level comparison folders under
+Each method directory contains `runs/` for split outputs/checkpoints/configs/logs
+and `records/` for generated split-level indexes only. The expected files in
+`records/` are `split_results.csv`, `split_results.json`, and
+`split_results.md`; historical comparison folders should be preserved under
+`runs/_legacy_records/`. Do not create new top-level comparison folders under
 `experiments/`; write cross-method summaries to `experiment_records/` instead.
 
 ## Target Layout

@@ -39,6 +39,12 @@ Notes:
 
 - Do not create new top-level comparison folders under `experiments/`.
 - Put model outputs/checkpoints under `runs/`.
-- Put logs, summaries, and lightweight run records under `records/`.
+- Put only split-level result indexes under `records/`:
+  `split_results.csv`, `split_results.json`, and `split_results.md`.
+- Keep raw run summaries, logs, configs, checkpoints, and archived historical
+  comparison files under `runs/`; old record folders are preserved under
+  `runs/_legacy_records/`.
 - Cross-method or paper-facing comparisons should live under `experiment_records/`.
 - The local move manifest is `experiments/experiment_tree_manifest.json`.
+- Rebuild method-level split indexes with
+  `python tools/build_experiment_split_records.py --apply`.
