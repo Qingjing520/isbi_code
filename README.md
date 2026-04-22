@@ -90,20 +90,13 @@ F:\Anaconda\envs\pytorch\python.exe F:\Tasks\isbi_code\tools\watch_dual_text_con
 
 ## Latest Result Snapshot
 
-The latest stable report is:
+The latest clean rerun summary is generated at:
 
 ```text
-experiment_records\reports\ontology\dual_text_concept_graph_ablation_final.md
+experiment_records\reports\ordered_5split\summary.md
 ```
 
-High-level conclusion:
-
-- KIRC: `dual_text + ncit_do` is the best ontology-graph variant and nearly ties
-  the old raw-text dual baseline.
-- BRCA: `dual_text + ncit_snomed_mapped` is best among ontology variants, but it
-  still trails the old raw-text dual baseline.
-- `full_multi_ontology` should not become the default until BRCA concept noise
-  and fusion behavior are audited.
+Old result records were intentionally removed before the clean ordered rerun.
 
 ## Repository Map
 
