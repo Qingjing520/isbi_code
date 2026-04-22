@@ -97,6 +97,9 @@ experiment_records\reports\ordered_5split\summary.md
 ```
 
 Old result records were intentionally removed before the clean ordered rerun.
+The ordered runner is append-style: rerunning the same dataset/method continues
+from the next split in the same run folder, then renames the folder suffix to the
+cumulative completed split count.
 
 ## Repository Map
 

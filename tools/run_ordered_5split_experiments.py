@@ -3,10 +3,10 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import re
 import statistics
 import subprocess
-import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -68,6 +68,8 @@ class Task:
     run_name: str
     run_dir: Path
     config_path: Path
+    split_indices: list[int]
+    completed_before: list[int]
     graph_manifest_template: str = ""
 
     @property
@@ -81,8 +83,21 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--datasets", nargs="+", default=list(DATASET_ORDER), choices=DATASET_ORDER)
     parser.add_argument("--methods", nargs="+", default=list(METHOD_ORDER), choices=METHOD_ORDER)
-    parser.add_argument("--num_splits", type=int, default=5)
-    parser.add_argument("--split_offset", type=int, default=0)
+    parser.add_argument(
+        "--num_splits",
+        type=int,
+        default=5,
+        help="Number of new splits to run for each available dataset/method.",
+    )
+    parser.add_argument(
+        "--split_offset",
+        type=int,
+        default=None,
+        help=(
+            "Optional explicit starting split. By default the runner continues from the "
+            "next split after the latest completed split in the existing run folder."
+        ),
+    )
     parser.add_argument("--ontology_variant", type=str, default=DEFAULT_ONTOLOGY_VARIANT)
     parser.add_argument("--train_num_workers", type=int, default=0)
     parser.add_argument("--force_train", action="store_true")
@@ -103,11 +118,73 @@ def method_root(dataset: str, method: str) -> Path:
 
 
 def run_dir(dataset: str, method: str) -> Path:
-    return method_root(dataset, method) / "runs" / f"{dataset.lower()}_{method.replace('-', '_')}_5splits"
+    return run_dir_for_count(dataset, method, 0)
 
 
-def split_indices(args: argparse.Namespace) -> list[int]:
-    return list(range(args.split_offset, args.split_offset + args.num_splits))
+def run_prefix(dataset: str, method: str) -> str:
+    return f"{dataset.lower()}_{method.replace('-', '_')}_"
+
+
+def run_dir_for_count(dataset: str, method: str, count: int) -> Path:
+    count = max(0, int(count))
+    return method_root(dataset, method) / "runs" / f"{run_prefix(dataset, method)}{count}splits"
+
+
+def completed_split_indices(run_dir: Path) -> list[int]:
+    indices: list[int] = []
+    if not run_dir.exists():
+        return indices
+    for split_dir in run_dir.glob("split_*"):
+        if not split_dir.is_dir():
+            continue
+        match = re.match(r"split_(\d+)$", split_dir.name)
+        if not match:
+            continue
+        if (split_dir / "best_model.pt").exists() or (split_dir / "log.jsonl").exists():
+            indices.append(int(match.group(1)))
+    return sorted(set(indices))
+
+
+def find_existing_run_dir(dataset: str, method: str) -> Path | None:
+    runs_root = method_root(dataset, method) / "runs"
+    if not runs_root.exists():
+        return None
+
+    prefix = run_prefix(dataset, method)
+    candidates: list[tuple[int, int, float, Path]] = []
+    for child in runs_root.iterdir():
+        if not child.is_dir() or child.name.startswith("_"):
+            continue
+
+        completed = completed_split_indices(child)
+        if not completed:
+            continue
+
+        standard_match = re.match(rf"^{re.escape(prefix)}(\d+)splits$", child.name, flags=re.IGNORECASE)
+        if standard_match:
+            suffix_count = int(standard_match.group(1))
+            candidates.append((1, max(suffix_count, len(completed)), child.stat().st_mtime, child))
+            continue
+
+        # Compatibility with the preserved legacy LUSC sentence-only folder.
+        name = child.name.lower()
+        if dataset.lower() in name and ("sentence" in name or method.replace("-", "_") in name):
+            candidates.append((0, len(completed), child.stat().st_mtime, child))
+
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
+    return candidates[0][3]
+
+
+def planned_run_dir(dataset: str, method: str) -> Path:
+    return find_existing_run_dir(dataset, method) or run_dir_for_count(dataset, method, 0)
+
+
+def task_split_indices(run_dir_path: Path, args: argparse.Namespace) -> tuple[list[int], list[int]]:
+    completed = completed_split_indices(run_dir_path)
+    start = int(args.split_offset) if args.split_offset is not None else ((max(completed) + 1) if completed else 0)
+    return list(range(start, start + args.num_splits)), completed
 
 
 def missing_base_inputs(dataset: str, indices: list[int]) -> list[str]:
@@ -276,8 +353,7 @@ def base_payload(dataset: str, exp_dir: Path) -> dict[str, Any]:
     }
 
 
-def write_config(dataset: str, method: str, variant: str, graph_manifest_template: str = "") -> Path:
-    exp_dir = run_dir(dataset, method)
+def write_config(dataset: str, method: str, variant: str, exp_dir: Path, graph_manifest_template: str = "") -> Path:
     payload = base_payload(dataset, exp_dir)
     cfg = DATASETS[dataset]
 
@@ -319,7 +395,7 @@ def write_config(dataset: str, method: str, variant: str, graph_manifest_templat
     else:
         raise ValueError(f"Cannot write config for unsupported method: {method}")
 
-    config_path = CONFIG_ROOT / f"{dataset.lower()}_{method.replace('-', '_')}_5splits.yaml"
+    config_path = CONFIG_ROOT / f"{dataset.lower()}_{method.replace('-', '_')}.yaml"
     ensure_dir(config_path.parent)
     config_path.write_text(yaml.safe_dump(payload, sort_keys=False, allow_unicode=True), encoding="utf-8")
     return config_path
@@ -444,6 +520,8 @@ def write_split_records(records_dir: Path, rows: list[dict[str, Any]]) -> None:
 
 
 def run_task(task: Task, args: argparse.Namespace) -> None:
+    if not task.split_indices:
+        return
     cmd = [
         str(PYTHON),
         str(REPO_ROOT / "run_main_splits.py"),
@@ -454,9 +532,9 @@ def run_task(task: Task, args: argparse.Namespace) -> None:
         "--output_root",
         str(task.run_dir),
         "--num_splits",
-        str(args.num_splits),
+        str(len(task.split_indices)),
         "--split_offset",
-        str(args.split_offset),
+        str(task.split_indices[0]),
         "--train_num_workers",
         str(args.train_num_workers),
     ]
@@ -477,46 +555,113 @@ def run_task(task: Task, args: argparse.Namespace) -> None:
         raise RuntimeError(f"Training failed for {task.dataset} {task.method}. See {log_path}")
 
 
+def best_or_final_log_metrics(log_path: Path) -> tuple[str, str, str]:
+    if not log_path.exists():
+        return "", "", ""
+
+    best_acc = ""
+    best_auc = ""
+    best_epoch = ""
+    try:
+        for line in log_path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            record = json.loads(line)
+            if record.get("type") == "final_evaluation":
+                target = record.get("target", {})
+                return str(target.get("acc", "")), str(target.get("auc", "")), "final_evaluation"
+            target = record.get("target")
+            if isinstance(target, dict) and "auc" in target:
+                auc = float(target["auc"])
+                if best_auc == "" or auc > float(best_auc):
+                    best_acc = str(target.get("acc", ""))
+                    best_auc = str(target.get("auc", ""))
+                    best_epoch = str(record.get("epoch", ""))
+    except Exception:
+        return "", "", ""
+
+    if best_auc != "":
+        return best_acc, best_auc, f"from_log_best_epoch_{best_epoch}"
+    return "", "", ""
+
+
 def load_summary_rows(task: Task, variant: str) -> list[dict[str, Any]]:
-    summary_csv = task.run_dir / "summary.csv"
-    if not summary_csv.exists():
-        return []
     rows: list[dict[str, Any]] = []
-    with summary_csv.open("r", encoding="utf-8-sig", newline="") as handle:
-        for row in csv.DictReader(handle):
-            rows.append(
-                {
-                    "dataset": task.dataset,
-                    "method": task.method,
-                    "run_name": task.run_name,
-                    "split_idx": row.get("split_idx", ""),
-                    "status": row.get("status", ""),
-                    "acc": row.get("acc", ""),
-                    "auc": row.get("auc", ""),
-                    "source_type": "summary.csv",
-                    "source_path": str(summary_csv),
-                    "text_mode": "dual_text" if task.method != "sentence-only" else "sentence_pt",
-                    "ontology_variant": variant if task.method.endswith("ontology") else "",
-                    "text_dir": "",
-                    "text_graph_feature": "node_features",
-                    "text_use_graph_structure": str(task.method != "sentence-only"),
-                    "split_file": row.get("split_file", ""),
-                    "graph_manifest_csv": row.get("graph_manifest_csv", ""),
-                    "exp_dir": row.get("exp_dir", ""),
-                    "best_path": "",
-                    "train_size": "",
-                    "test_size": "",
-                    "fusion_gate_mean": "",
-                    "doc_attention_entropy_mean": "",
-                    "doc_attention_max_mean": "",
-                    "skip_reason": "",
-                }
-            )
+    for split_dir in sorted(task.run_dir.glob("split_*"), key=lambda path: int(path.name.split("_")[-1]) if path.name.split("_")[-1].isdigit() else 10**9):
+        if not split_dir.is_dir():
+            continue
+        split_text = split_dir.name.split("_")[-1]
+        if not split_text.isdigit():
+            continue
+        split_idx = int(split_text)
+        acc, auc, status = best_or_final_log_metrics(split_dir / "log.jsonl")
+        if not (split_dir / "best_model.pt").exists() and not auc:
+            continue
+        graph_manifest_csv = ""
+        split_file = str(DATASETS[task.dataset]["split_dir"] / f"split_{split_idx}.csv")
+        config_path = split_dir / "config.json"
+        if config_path.exists():
+            try:
+                config = json.loads(config_path.read_text(encoding="utf-8"))
+                data = config.get("data", {})
+                graph_manifest_csv = str(data.get("graph_manifest_csv", ""))
+                split_file = str(data.get("split_file", split_file))
+            except Exception:
+                pass
+        rows.append(
+            {
+                "dataset": task.dataset,
+                "method": task.method,
+                "run_name": task.run_dir.name,
+                "split_idx": str(split_idx),
+                "status": status or "checkpoint_exists",
+                "acc": acc,
+                "auc": auc,
+                "source_type": "log.jsonl",
+                "source_path": str(split_dir / "log.jsonl"),
+                "text_mode": "dual_text" if task.method != "sentence-only" else "sentence_pt",
+                "ontology_variant": variant if task.method.endswith("ontology") else "",
+                "text_dir": "",
+                "text_graph_feature": "node_features",
+                "text_use_graph_structure": str(task.method != "sentence-only"),
+                "split_file": split_file,
+                "graph_manifest_csv": graph_manifest_csv,
+                "exp_dir": str(split_dir),
+                "best_path": str(split_dir / "best_model.pt"),
+                "train_size": "",
+                "test_size": "",
+                "fusion_gate_mean": "",
+                "doc_attention_entropy_mean": "",
+                "doc_attention_max_mean": "",
+                "skip_reason": "",
+            }
+        )
     return rows
 
 
 def write_records_from_summary(task: Task, variant: str) -> None:
     write_split_records(task.records_dir, load_summary_rows(task, variant))
+
+
+def rename_run_dir_to_completed_count(task: Task) -> Task:
+    completed = completed_split_indices(task.run_dir)
+    if not completed:
+        return task
+
+    target = run_dir_for_count(task.dataset, task.method, len(completed))
+    if task.run_dir.resolve() == target.resolve():
+        return task
+    if target.exists():
+        print(
+            f"[{now()}] keep run folder name because target exists: {target}",
+            flush=True,
+        )
+        return task
+
+    ensure_dir(target.parent)
+    task.run_dir.rename(target)
+    print(f"[{now()}] renamed run folder: {task.run_dir.name} -> {target.name}", flush=True)
+    return replace(task, run_name=target.name, run_dir=target)
 
 
 def write_overall_plan(plan_path: Path, payload: dict[str, Any]) -> None:
@@ -586,9 +731,23 @@ def write_report(tasks: list[Task], skipped: list[dict[str, Any]], variant: str)
     (report_dir / "summary.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def serialize_tasks(tasks: list[Task]) -> list[dict[str, Any]]:
+    return [
+        {
+            "dataset": task.dataset,
+            "method": task.method,
+            "run_dir": str(task.run_dir),
+            "config_path": str(task.config_path),
+            "graph_manifest_template": task.graph_manifest_template,
+            "completed_before": task.completed_before,
+            "requested_split_indices": task.split_indices,
+        }
+        for task in tasks
+    ]
+
+
 def main() -> int:
     args = parse_args()
-    indices = split_indices(args)
     tasks: list[Task] = []
     skipped: list[dict[str, Any]] = []
 
@@ -596,12 +755,22 @@ def main() -> int:
         for method in args.methods:
             ensure_dir(method_root(dataset, method) / "runs")
             ensure_dir(method_root(dataset, method) / "records")
+            current_run_dir = planned_run_dir(dataset, method)
+            indices, completed_before = task_split_indices(current_run_dir, args)
             reason = unavailable_reason(dataset, method, args.ontology_variant, indices)
             if reason:
                 print(f"[{now()}] SKIP {dataset} {method}: {reason}", flush=True)
                 if not args.dry_run:
                     write_skipped_records(dataset, method, indices, reason)
-                skipped.append({"dataset": dataset, "method": method, "reason": reason})
+                skipped.append(
+                    {
+                        "dataset": dataset,
+                        "method": method,
+                        "reason": reason,
+                        "requested_split_indices": indices,
+                        "completed_before": completed_before,
+                    }
+                )
                 continue
 
             manifest_template = ""
@@ -617,16 +786,24 @@ def main() -> int:
                     / f"{dataset.lower()}_concept_graph_manifest_split{{split_idx}}.csv"
                 )
 
-            config_path = CONFIG_ROOT / f"{dataset.lower()}_{method.replace('-', '_')}_5splits.yaml"
+            config_path = CONFIG_ROOT / f"{dataset.lower()}_{method.replace('-', '_')}.yaml"
             if not args.dry_run:
-                config_path = write_config(dataset, method, args.ontology_variant, manifest_template)
+                config_path = write_config(
+                    dataset=dataset,
+                    method=method,
+                    variant=args.ontology_variant,
+                    exp_dir=current_run_dir,
+                    graph_manifest_template=manifest_template,
+                )
             tasks.append(
                 Task(
                     dataset=dataset,
                     method=method,
-                    run_name=run_dir(dataset, method).name,
-                    run_dir=run_dir(dataset, method),
+                    run_name=current_run_dir.name,
+                    run_dir=current_run_dir,
                     config_path=config_path,
+                    split_indices=indices,
+                    completed_before=completed_before,
                     graph_manifest_template=manifest_template,
                 )
             )
@@ -635,20 +812,10 @@ def main() -> int:
         "created_at": now(),
         "datasets": args.datasets,
         "methods": args.methods,
-        "num_splits": args.num_splits,
-        "split_offset": args.split_offset,
-        "split_indices": indices,
+        "new_splits_per_task": args.num_splits,
+        "split_offset": args.split_offset if args.split_offset is not None else "auto",
         "ontology_variant": args.ontology_variant,
-        "tasks": [
-            {
-                "dataset": task.dataset,
-                "method": task.method,
-                "run_dir": str(task.run_dir),
-                "config_path": str(task.config_path),
-                "graph_manifest_template": task.graph_manifest_template,
-            }
-            for task in tasks
-        ],
+        "tasks": serialize_tasks(tasks),
         "skipped": skipped,
     }
 
@@ -658,11 +825,15 @@ def main() -> int:
 
     write_overall_plan(REPO_ROOT / "experiment_records" / "reports" / "ordered_5split" / "plan.json", plan)
 
-    for task in tasks:
+    for index, task in enumerate(tasks):
         print(f"[{now()}] START {task.dataset} {METHOD_LABELS[task.method]}", flush=True)
         run_task(task, args)
+        task = rename_run_dir_to_completed_count(task)
+        tasks[index] = task
         write_records_from_summary(task, args.ontology_variant)
         write_report(tasks, skipped, args.ontology_variant)
+        plan["tasks"] = serialize_tasks(tasks)
+        write_overall_plan(REPO_ROOT / "experiment_records" / "reports" / "ordered_5split" / "plan.json", plan)
         print(f"[{now()}] DONE  {task.dataset} {METHOD_LABELS[task.method]}", flush=True)
 
     write_report(tasks, skipped, args.ontology_variant)

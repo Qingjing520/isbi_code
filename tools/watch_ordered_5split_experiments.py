@@ -68,15 +68,22 @@ def main() -> int:
 
     print(f"Ordered 5-Split Watch | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"Plan: {args.plan}")
-    print(f"Splits: {plan.get('split_indices', [])}")
+    print(f"New splits per task: {plan.get('new_splits_per_task', plan.get('num_splits', ''))}")
+    print(f"Split offset: {plan.get('split_offset', '')}")
     print("")
 
     for task in plan.get("tasks", []):
         dataset = task.get("dataset", "")
         method = task.get("method", "")
         run_dir = Path(task.get("run_dir", ""))
+        requested = task.get("requested_split_indices") or plan.get("split_indices", [])
+        completed_before = task.get("completed_before", [])
         summary_rows = read_summary(run_dir / "summary.csv")
         print(f"{dataset} / {method}")
+        if completed_before:
+            print(f"  completed before this run: {completed_before}")
+        if requested:
+            print(f"  requested this run: {requested}")
         if summary_rows:
             for row in summary_rows:
                 print(
@@ -88,7 +95,7 @@ def main() -> int:
                     )
                 )
         else:
-            for split_idx in plan.get("split_indices", []):
+            for split_idx in requested:
                 print(f"  split{split_idx}: {latest_split_epoch(run_dir, int(split_idx))}")
         print(f"  run: {run_dir}")
         print("")
