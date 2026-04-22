@@ -20,6 +20,10 @@ Thumbs.db
 # Training / experiment outputs
 experiments/
 *.log
+configs/generated/
+experiment_records/dual_text_concept_graph_ablation/summary.csv
+experiment_records/dual_text_concept_graph_ablation/summary.json
+experiment_records/dual_text_concept_graph_ablation/summary.md
 
 # Pathology report pipeline outputs
 pathology_report_extraction/Output/
