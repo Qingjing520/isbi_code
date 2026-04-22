@@ -12,8 +12,23 @@ from typing import Any
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-RUN_DIR = REPO_ROOT / "experiments" / "dual_text_concept_graph_ablation_logs"
+RUN_DIR_CANDIDATES = [
+    REPO_ROOT
+    / "experiments"
+    / "KIRC"
+    / "sentence-hierarchical-graph-ontology"
+    / "records"
+    / "shared_dual_text_concept_graph_ablation_logs",
+    REPO_ROOT / "experiments" / "dual_text_concept_graph_ablation_logs",
+]
 SUMMARY_MD = REPO_ROOT / "experiment_records" / "dual_text_concept_graph_ablation" / "summary.md"
+
+
+def run_dir() -> Path:
+    for candidate in RUN_DIR_CANDIDATES:
+        if candidate.exists():
+            return candidate
+    return RUN_DIR_CANDIDATES[0]
 
 
 def clear_screen() -> None:
@@ -45,7 +60,7 @@ def load_jsonl_last(path: Path) -> dict[str, Any] | None:
 
 def parse_current_run() -> dict[str, str]:
     payload: dict[str, str] = {}
-    for line in read_text(RUN_DIR / "current_run.txt").splitlines():
+    for line in read_text(run_dir() / "current_run.txt").splitlines():
         if "=" not in line:
             continue
         key, value = line.split("=", 1)
@@ -74,7 +89,7 @@ def process_alive(pid: str) -> bool | None:
 
 
 def latest_started_task() -> str:
-    log = read_text(RUN_DIR / "full_ablation.out.log")
+    log = read_text(run_dir() / "full_ablation.out.log")
     matches = re.findall(r"\[(\d\d:\d\d:\d\d)\] start ([^\r\n]+)", log)
     if not matches:
         return "unknown"
@@ -89,6 +104,16 @@ def format_float(value: Any) -> str:
         return f"{float(value):.4f}"
     except Exception:
         return "NA"
+
+
+def display_log_path(path_text: str) -> str:
+    path = Path(path_text)
+    if path.exists():
+        return str(path)
+    candidate = run_dir() / path.name
+    if candidate.exists():
+        return str(candidate)
+    return path_text
 
 
 def print_summary(exp: Path) -> None:
@@ -134,7 +159,7 @@ def print_split_progress(exp: Path, split_idx: int) -> None:
 
 
 def print_experiment_progress() -> None:
-    experiments = sorted(REPO_ROOT.glob("experiments/*dual_text_concept_graph_*_3splits_nw0"))
+    experiments = sorted(REPO_ROOT.glob("experiments/**/*dual_text_concept_graph_*_3splits_nw0"))
     if not experiments:
         print("No dual_text concept-graph experiments found yet.")
         return
@@ -147,18 +172,49 @@ def print_experiment_progress() -> None:
 
 
 def print_completed_rows() -> None:
-    lines = read_text(SUMMARY_MD).splitlines()
-    table_lines = [
-        line
-        for line in lines
-        if line.startswith("| ") and "Dataset" not in line and "---" not in line
-    ]
-    if not table_lines:
+    summary_paths = sorted(REPO_ROOT.glob("experiments/**/*dual_text_concept_graph*_3splits_nw0/summary.json"))
+    if not summary_paths and SUMMARY_MD.exists():
+        lines = read_text(SUMMARY_MD).splitlines()
+        table_lines = [
+            line
+            for line in lines
+            if line.startswith("| ") and "Dataset" not in line and "---" not in line
+        ]
+        if table_lines:
+            print("\nCompleted summary rows:")
+            for line in table_lines[-12:]:
+                print(line)
         return
 
-    print("\nCompleted summary rows:")
-    for line in table_lines[-12:]:
-        print(line)
+    rows: list[str] = []
+    for summary_path in summary_paths:
+        try:
+            payload = json.loads(summary_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        exp_name = summary_path.parent.name
+        dataset = "BRCA" if exp_name.lower().startswith("brca_") else "KIRC" if exp_name.lower().startswith("kirc_") else "NA"
+        variant = exp_name.lower()
+        marker = "dual_text_concept_graph_"
+        if marker in variant:
+            variant = variant.split(marker, 1)[1]
+        variant = variant.replace("_3splits_nw0", "").replace("_auxgw20", "")
+        rows.append(
+            "| {dataset} | {variant} | {acc_mean} +/- {acc_std} | {auc_mean} +/- {auc_std} | `{path}` |".format(
+                dataset=dataset,
+                variant=variant,
+                acc_mean=format_float(payload.get("acc_mean")),
+                acc_std=format_float(payload.get("acc_std")),
+                auc_mean=format_float(payload.get("auc_mean")),
+                auc_std=format_float(payload.get("auc_std")),
+                path=str(summary_path),
+            )
+        )
+
+    if rows:
+        print("\nCompleted summary rows:")
+        for line in rows[-12:]:
+            print(line)
 
 
 def render_once() -> None:
@@ -169,9 +225,9 @@ def render_once() -> None:
     print(f"Main PID: {pid or 'unknown'} | alive: {process_alive(pid)}")
     print(f"Latest task: {latest_started_task()}")
     if current_run.get("STDOUT"):
-        print(f"stdout: {current_run['STDOUT']}")
+        print(f"stdout: {display_log_path(current_run['STDOUT'])}")
     if current_run.get("STDERR"):
-        print(f"stderr: {current_run['STDERR']}")
+        print(f"stderr: {display_log_path(current_run['STDERR'])}")
 
     print_experiment_progress()
     print_completed_rows()

@@ -122,3 +122,9 @@ experiments\
 pathology_report_extraction\Output\
 configs\generated\
 ```
+
+`experiments\` is organized as:
+
+```text
+experiments\<BRCA|KIRC|LUSC>\<sentence-only|sentence-ontology|sentence-hierarchical-graph|sentence-hierarchical-graph-ontology>\<runs|records>
+```

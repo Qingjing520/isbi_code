@@ -24,6 +24,33 @@ ongoing experiments.
 | `tmp_paper_extract.txt` | Temporary artifact | Candidate for removal/archive |
 | `test.py` | Untracked Hello World scratch file | Ask before deleting |
 
+## Experiment Output Layout
+
+Runtime experiment outputs under `experiments/` should use this structure:
+
+```text
+experiments/
+  BRCA/
+    sentence-only/
+    sentence-ontology/
+    sentence-hierarchical-graph/
+    sentence-hierarchical-graph-ontology/
+  KIRC/
+    sentence-only/
+    sentence-ontology/
+    sentence-hierarchical-graph/
+    sentence-hierarchical-graph-ontology/
+  LUSC/
+    sentence-only/
+    sentence-ontology/
+    sentence-hierarchical-graph/
+    sentence-hierarchical-graph-ontology/
+```
+
+Each method directory contains `runs/` for split outputs/checkpoints and `records/`
+for summaries/logs. Do not create new top-level comparison folders under
+`experiments/`; write cross-method summaries to `experiment_records/` instead.
+
 ## Target Layout
 
 The clean target structure should look like this:

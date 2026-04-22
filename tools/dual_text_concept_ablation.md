@@ -22,7 +22,7 @@ Generated configs and experiment outputs are intentionally not source files.
 - Repo: `F:\Tasks\isbi_code`
 - Ontology processed root: `F:\Tasks\Ontologies\processed`
 - Result summary: `experiment_records\dual_text_concept_graph_ablation\summary.md`
-- Runtime logs: `experiments\dual_text_concept_graph_ablation_logs`
+- Runtime logs: `experiments\KIRC\sentence-hierarchical-graph-ontology\records\shared_dual_text_concept_graph_ablation_logs`
 
 ## Monitor
 

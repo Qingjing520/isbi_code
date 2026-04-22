@@ -57,7 +57,7 @@ Source summaries:
 
 | Purpose | Path |
 |---|---|
-| KIRC `ncit_do` best summary | `F:\Tasks\isbi_code\experiments\kirc_dual_text_concept_graph_ncit_do_3splits_nw0\summary.json` |
-| BRCA `ncit_snomed_mapped` best summary | `F:\Tasks\isbi_code\experiments\brca_dual_text_concept_graph_ncit_snomed_mapped_3splits_nw0\summary.json` |
-| Ablation run log | `F:\Tasks\isbi_code\experiments\dual_text_concept_graph_ablation_logs\full_ablation.out.log` |
+| KIRC `ncit_do` best summary | `F:\Tasks\isbi_code\experiments\KIRC\sentence-hierarchical-graph-ontology\runs\kirc_dual_text_concept_graph_ncit_do_3splits_nw0\summary.json` |
+| BRCA `ncit_snomed_mapped` best summary | `F:\Tasks\isbi_code\experiments\BRCA\sentence-hierarchical-graph-ontology\runs\brca_dual_text_concept_graph_ncit_snomed_mapped_3splits_nw0\summary.json` |
+| Ablation run log | `F:\Tasks\isbi_code\experiments\KIRC\sentence-hierarchical-graph-ontology\records\shared_dual_text_concept_graph_ablation_logs\full_ablation.out.log` |
 | Previous comparison table | `F:\Tasks\isbi_code\experiment_records\multi_ontology_concept_graph_baseline_comparison.md` |

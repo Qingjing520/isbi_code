@@ -20,8 +20,8 @@ Source files:
 
 | Purpose | Path |
 |---|---|
-| KIRC new summary | `F:\Tasks\isbi_code\experiments\kirc_multi_ontology_concept_graph_main_3splits_nw0\summary.json` |
-| BRCA new summary | `F:\Tasks\isbi_code\experiments\brca_multi_ontology_concept_graph_main_3splits_nw0\summary.json` |
-| KIRC old comparable baseline | `F:\Tasks\isbi_code\experiments\kirc_dual_text_section_title_gate001_3splits\comparison_summary.json` |
-| BRCA old comparable baseline | `F:\Tasks\isbi_code\experiments\brca_dual_text_section_title_gate001_3splits\comparison_summary.json` |
-| KIRC old NCIt-only split0 log | `F:\Tasks\isbi_code\experiments\kirc_ncit_concept_graph_main_3splits\run_20260415_144913.out.log` |
+| KIRC new summary | `F:\Tasks\isbi_code\experiments\KIRC\sentence-hierarchical-graph-ontology\runs\kirc_multi_ontology_concept_graph_main_3splits_nw0\summary.json` |
+| BRCA new summary | `F:\Tasks\isbi_code\experiments\BRCA\sentence-hierarchical-graph-ontology\runs\brca_multi_ontology_concept_graph_main_3splits_nw0\summary.json` |
+| KIRC old comparable baseline | `F:\Tasks\isbi_code\experiments\KIRC\sentence-hierarchical-graph\runs\kirc_dual_text_section_title_gate001_3splits\comparison_summary.json` |
+| BRCA old comparable baseline | `F:\Tasks\isbi_code\experiments\BRCA\sentence-hierarchical-graph\runs\brca_dual_text_section_title_gate001_3splits\comparison_summary.json` |
+| KIRC old NCIt-only split0 log | `F:\Tasks\isbi_code\experiments\KIRC\sentence-hierarchical-graph-ontology\runs\kirc_ncit_concept_graph_main_3splits\run_20260415_144913.out.log` |

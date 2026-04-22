@@ -19,7 +19,9 @@ PYTHON = Path(r"F:\Anaconda\envs\pytorch\python.exe")
 ONTOLOGY_PROCESSED_DIR = Path(r"F:\Tasks\Ontologies\processed")
 ONTOLOGY_ABLATION_DIR = ONTOLOGY_PROCESSED_DIR / "ablations"
 OUTPUT_ROOT = REPO_ROOT / "pathology_report_extraction" / "Output"
-LOG_ROOT = REPO_ROOT / "experiments" / "dual_text_concept_graph_ablation_logs"
+EXPERIMENTS_ROOT = REPO_ROOT / "experiments"
+METHOD_DIR = "sentence-hierarchical-graph-ontology"
+LOG_ROOT = EXPERIMENTS_ROOT / "KIRC" / METHOD_DIR / "records" / "shared_dual_text_concept_graph_ablation_logs"
 AUX_GRAPH_WEIGHT_MAX = 0.2
 AUX_GRAPH_WEIGHT_TARGET = 0.1
 EXPERIMENT_TAG = "auxgw20"
@@ -66,6 +68,10 @@ def write_json(path: Path, payload: dict[str, Any]) -> None:
 
 def experiment_name(dataset: str, variant: str) -> str:
     return f"{dataset.lower()}_dual_text_concept_graph_{variant}_{EXPERIMENT_TAG}_3splits_nw0"
+
+
+def experiment_dir(dataset: str, variant: str) -> Path:
+    return EXPERIMENTS_ROOT / dataset / METHOD_DIR / "runs" / experiment_name(dataset, variant)
 
 
 def run_command(name: str, args: list[str], log_path: Path) -> None:
@@ -198,7 +204,7 @@ def build_manifest(dataset: str, variant: str, split_idx: int, graph_dir: Path) 
 def write_train_config(dataset: str, variant: str, graph_dir: Path, manifest_template: str) -> Path:
     cfg = DATASETS[dataset]
     config_path = REPO_ROOT / "configs" / "generated" / f"{dataset.lower()}_{variant}_dual_text_concept_graph_{EXPERIMENT_TAG}.yaml"
-    exp_dir = REPO_ROOT / "experiments" / experiment_name(dataset, variant)
+    exp_dir = experiment_dir(dataset, variant)
     payload = {
         "seed": 23,
         "data": {
@@ -301,7 +307,7 @@ def write_train_config(dataset: str, variant: str, graph_dir: Path, manifest_tem
 
 def train_variant(dataset: str, variant: str, config_path: Path, manifest_template: str, num_splits: int, force: bool) -> Path:
     cfg = DATASETS[dataset]
-    output_root = REPO_ROOT / "experiments" / experiment_name(dataset, variant)
+    output_root = experiment_dir(dataset, variant)
     args = [
         str(PYTHON),
         str(REPO_ROOT / "run_main_splits.py"),
@@ -334,7 +340,7 @@ def aggregate_results(datasets: list[str], variants: list[str]) -> None:
     rows: list[dict[str, Any]] = []
     for dataset in datasets:
         for variant in variants:
-            summary_path = REPO_ROOT / "experiments" / experiment_name(dataset, variant) / "summary.json"
+            summary_path = experiment_dir(dataset, variant) / "summary.json"
             if not summary_path.exists():
                 rows.append({"dataset": dataset, "variant": variant, "status": "missing"})
                 continue

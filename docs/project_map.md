@@ -89,7 +89,8 @@ These are useful but should eventually move under `tools/analysis/`,
 ## Output And Records
 
 - `experiments/`
-  Ignored runtime outputs, checkpoints, logs.
+  Ignored runtime outputs, checkpoints, logs. Organized by dataset and method:
+  `BRCA|KIRC|LUSC / sentence-only|sentence-ontology|sentence-hierarchical-graph|sentence-hierarchical-graph-ontology / runs|records`.
 
 - `pathology_report_extraction/Output/`
   Ignored preprocessing outputs and graph artifacts.

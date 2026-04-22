@@ -35,14 +35,14 @@ Tracked lightweight summaries:
 Local raw experiment outputs:
 
 - explicit graph structure, 10 splits:
-  - [comparison_summary.json](D:\Tasks\isbi_code\experiments\brca_text_mode_comparison_10splits_graph_structure\comparison_summary.json)
-  - [comparison_results.csv](D:\Tasks\isbi_code\experiments\brca_text_mode_comparison_10splits_graph_structure\comparison_results.csv)
+  - [comparison_summary.json](D:\Tasks\isbi_code\experiments\BRCA\sentence-only\records\brca_text_mode_mixed_10splits_graph_structure\comparison_summary.json)
+  - [comparison_results.csv](D:\Tasks\isbi_code\experiments\BRCA\sentence-only\records\brca_text_mode_mixed_10splits_graph_structure\comparison_results.csv)
 - conservative graph encoder, 3 splits:
-  - [comparison_summary.json](D:\Tasks\isbi_code\experiments\brca_text_mode_comparison_3splits_graph_structure_conservative\comparison_summary.json)
-  - [comparison_results.csv](D:\Tasks\isbi_code\experiments\brca_text_mode_comparison_3splits_graph_structure_conservative\comparison_results.csv)
+  - [comparison_summary.json](D:\Tasks\isbi_code\experiments\BRCA\sentence-only\records\brca_text_mode_mixed_3splits_graph_structure_conservative\comparison_summary.json)
+  - [comparison_results.csv](D:\Tasks\isbi_code\experiments\BRCA\sentence-only\records\brca_text_mode_mixed_3splits_graph_structure_conservative\comparison_results.csv)
 - conservative parent-only graph, 3 splits:
-  - [comparison_summary.json](D:\Tasks\isbi_code\experiments\brca_text_mode_comparison_3splits_graph_structure_parent_only\comparison_summary.json)
-  - [comparison_results.csv](D:\Tasks\isbi_code\experiments\brca_text_mode_comparison_3splits_graph_structure_parent_only\comparison_results.csv)
+  - [comparison_summary.json](D:\Tasks\isbi_code\experiments\BRCA\sentence-only\records\brca_text_mode_mixed_3splits_graph_structure_parent_only\comparison_summary.json)
+  - [comparison_results.csv](D:\Tasks\isbi_code\experiments\BRCA\sentence-only\records\brca_text_mode_mixed_3splits_graph_structure_parent_only\comparison_results.csv)
 
 ## What Failed in the First Explicit Graph Version
 
