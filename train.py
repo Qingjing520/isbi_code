@@ -132,12 +132,60 @@ def encode_text_batch(
     section_title_to_id: dict[str, int] | None = None,
 ) -> Tuple[List[torch.Tensor], torch.Tensor, dict]:
     if text_mode == "dual_text":
-        if pool_txt is None or hier_text_branch is None or dual_text_fusion is None:
-            raise RuntimeError("dual_text mode requires pool_txt, hier_text_branch, and dual_text_fusion.")
+        if pool_txt is None or dual_text_fusion is None:
+            raise RuntimeError("dual_text mode requires pool_txt and dual_text_fusion.")
 
         sentence_nodes = [mapper(payload["sentence_pt"]) for payload in txt_list]  # type: ignore[index]
         txt_pad, txt_mask = pad_and_mask(sentence_nodes, device)
         sentence_vec, _ = pool_txt(txt_pad, txt_mask)
+
+        if text_use_graph_structure:
+            if text_graph_encoder is None:
+                raise RuntimeError("dual_text graph-structured mode requires text_graph_encoder.")
+
+            graph_node_lists: List[torch.Tensor] = []
+            graph_vecs: List[torch.Tensor] = []
+            graph_topology_descs: List[torch.Tensor] = []
+            graph_json_paths: List[str] = []
+            for payload in txt_list:
+                graph_payload = payload["hierarchy_graph"]  # type: ignore[index]
+                if not isinstance(graph_payload, dict):
+                    raise TypeError("dual_text graph payload must be a dict.")
+                if "node_features" not in graph_payload:
+                    raise KeyError("dual_text graph payload missing 'node_features'.")
+
+                x = mapper(graph_payload["node_features"].float())
+                allowed_forward_relation_ids = _allowed_forward_relation_ids_from_payload(
+                    payload=graph_payload,
+                    text_graph_use_next_edges=text_graph_use_next_edges,
+                )
+                updated_nodes, pooled_vec = text_graph_encoder(
+                    node_features=x,
+                    edge_index=graph_payload["edge_index"].long(),
+                    edge_type=graph_payload["edge_type"].long(),
+                    node_type=graph_payload["node_type"].long(),
+                    allowed_forward_relation_ids=allowed_forward_relation_ids,
+                )
+                graph_node_lists.append(updated_nodes)
+                graph_vecs.append(pooled_vec)
+                graph_topology_descs.append(_graph_structure_descriptor(graph_payload))
+                graph_json_paths.append(str(payload.get("graph_json_path", "")))
+
+            graph_vec = torch.stack(graph_vecs, dim=0)
+            fused_vec, gates = dual_text_fusion(sentence_vec, graph_vec)
+            fused_nodes = [fused_vec[i].unsqueeze(0) for i in range(fused_vec.shape[0])]
+            extras = {
+                "sentence_vec": sentence_vec,
+                "graph_vec": graph_vec,
+                "graph_node_lists": graph_node_lists,
+                "fusion_gate": gates,
+                "graph_json_paths": graph_json_paths,
+                "graph_topology_descs": graph_topology_descs,
+            }
+            return graph_node_lists, fused_vec, extras
+
+        if hier_text_branch is None:
+            raise RuntimeError("dual_text hierarchy-readout mode requires hier_text_branch.")
 
         graph_sentence_nodes: List[torch.Tensor] = []
         graph_section_vecs: List[torch.Tensor] = []
@@ -251,17 +299,17 @@ def _allowed_forward_relation_ids_from_payload(
 
 
 def _graph_mode_uses_structure(text_mode: str) -> bool:
-    return text_mode in {"hierarchy_graph", "concept_graph"}
+    return text_mode in {"hierarchy_graph", "concept_graph", "dual_text"}
 
 
 def _auto_text_graph_num_node_types(text_mode: str) -> int:
-    if text_mode == "concept_graph":
+    if text_mode in {"concept_graph", "dual_text"}:
         return 4
     return 3
 
 
 def _auto_text_graph_num_base_relations(text_mode: str) -> int:
-    if text_mode == "concept_graph":
+    if text_mode in {"concept_graph", "dual_text"}:
         return 6
     return 2
 
@@ -314,6 +362,20 @@ def _collect_node_type_features(
     if not collected:
         return None
     return torch.cat(collected, dim=0)
+
+
+def _graph_payloads_for_text_mode(
+    txt_list: List[torch.Tensor | dict],
+    text_mode: str,
+) -> List[torch.Tensor | dict]:
+    if text_mode != "dual_text":
+        return txt_list
+
+    graph_payloads: List[torch.Tensor | dict] = []
+    for payload in txt_list:
+        if isinstance(payload, dict):
+            graph_payloads.append(payload.get("hierarchy_graph", {}))
+    return graph_payloads
 
 
 def _graph_structure_descriptor(payload: dict) -> torch.Tensor:
@@ -437,6 +499,74 @@ def _section_title_to_id_from_cfg(cfg) -> dict[str, int]:
 
 def _num_section_title_types_from_cfg(cfg) -> int:
     return len(list(getattr(cfg.model, "section_title_vocab", []) or [])) + 1
+
+
+def _validate_text_graph_structure(text_mode: str, text_use_graph_structure: bool) -> None:
+    if text_use_graph_structure and not _graph_mode_uses_structure(text_mode):
+        raise ValueError(
+            "text_use_graph_structure=True requires text_mode='hierarchy_graph', "
+            "'concept_graph', or 'dual_text'."
+        )
+
+
+def _build_text_modules(cfg, device: torch.device):
+    text_mode = getattr(cfg.data, "text_mode", "sentence_pt")
+    text_use_graph_structure = bool(getattr(cfg.data, "text_use_graph_structure", False))
+    _validate_text_graph_structure(text_mode, text_use_graph_structure)
+
+    pool_txt = None
+    text_graph_encoder = None
+    hier_text_branch = None
+    dual_text_fusion = None
+    use_section_title_embedding = bool(getattr(cfg.model, "use_section_title_embedding", False))
+
+    if text_mode == "dual_text":
+        pool_txt = AttentionPooling(
+            dim=cfg.model.feat_dim,
+            hidden=cfg.model.attn_pool_hidden,
+            dropout=cfg.model.attn_pool_dropout,
+        ).to(device)
+        if text_use_graph_structure:
+            text_graph_encoder = TextHierarchyGraphEncoder(
+                dim=cfg.model.feat_dim,
+                num_node_types=_text_graph_num_node_types(cfg),
+                num_base_relations=_text_graph_num_base_relations(cfg),
+                num_layers=cfg.model.text_graph_layers,
+                dropout=cfg.model.text_graph_dropout,
+                use_next_edges=cfg.model.text_graph_use_next_edges,
+            ).to(device)
+        else:
+            hier_text_branch = HierTextBranch(
+                dim=cfg.model.feat_dim,
+                hidden=cfg.model.hier_readout_hidden,
+                dropout=cfg.model.hier_readout_dropout,
+                sentence_local_layers=cfg.model.sentence_local_layers,
+                sentence_local_heads=cfg.model.sentence_local_heads,
+                readout_attention_init=cfg.model.hier_readout_attention_init,
+                use_section_title_embedding=use_section_title_embedding,
+                num_section_title_types=_num_section_title_types_from_cfg(cfg),
+            ).to(device)
+        dual_text_fusion = DualTextFusion(
+            dim=cfg.model.feat_dim,
+            dropout=cfg.model.text_dual_fusion_dropout,
+        ).to(device)
+    elif _graph_mode_uses_structure(text_mode) and text_use_graph_structure:
+        text_graph_encoder = TextHierarchyGraphEncoder(
+            dim=cfg.model.feat_dim,
+            num_node_types=_text_graph_num_node_types(cfg),
+            num_base_relations=_text_graph_num_base_relations(cfg),
+            num_layers=cfg.model.text_graph_layers,
+            dropout=cfg.model.text_graph_dropout,
+            use_next_edges=cfg.model.text_graph_use_next_edges,
+        ).to(device)
+    else:
+        pool_txt = AttentionPooling(
+            dim=cfg.model.feat_dim,
+            hidden=cfg.model.attn_pool_hidden,
+            dropout=cfg.model.attn_pool_dropout,
+        ).to(device)
+
+    return pool_txt, text_graph_encoder, hier_text_branch, dual_text_fusion
 
 
 def _load_section_titles(graph_json_path: str, cache: dict[str, list[str]]) -> list[str]:
@@ -731,45 +861,11 @@ def train_one_split(cfg):
 
     text_mode = getattr(cfg.data, "text_mode", "sentence_pt")
     text_use_graph_structure = bool(getattr(cfg.data, "text_use_graph_structure", False))
-    if text_use_graph_structure and not _graph_mode_uses_structure(text_mode):
-        raise ValueError("text_use_graph_structure=True requires text_mode='hierarchy_graph' or 'concept_graph'.")
+    _validate_text_graph_structure(text_mode, text_use_graph_structure)
     use_section_title_embedding = bool(getattr(cfg.model, "use_section_title_embedding", False))
     section_title_to_id = _section_title_to_id_from_cfg(cfg) if use_section_title_embedding else None
 
-    pool_txt = None
-    text_graph_encoder = None
-    hier_text_branch = None
-    dual_text_fusion = None
-    if _graph_mode_uses_structure(text_mode) and text_use_graph_structure:
-        text_graph_encoder = TextHierarchyGraphEncoder(
-            dim=cfg.model.feat_dim,
-            num_node_types=_text_graph_num_node_types(cfg),
-            num_base_relations=_text_graph_num_base_relations(cfg),
-            num_layers=cfg.model.text_graph_layers,
-            dropout=cfg.model.text_graph_dropout,
-            use_next_edges=cfg.model.text_graph_use_next_edges,
-        ).to(device)
-    else:
-        pool_txt = AttentionPooling(
-            dim=cfg.model.feat_dim,
-            hidden=cfg.model.attn_pool_hidden,
-            dropout=cfg.model.attn_pool_dropout,
-        ).to(device)
-        if text_mode == "dual_text":
-            hier_text_branch = HierTextBranch(
-                dim=cfg.model.feat_dim,
-                hidden=cfg.model.hier_readout_hidden,
-                dropout=cfg.model.hier_readout_dropout,
-                sentence_local_layers=cfg.model.sentence_local_layers,
-                sentence_local_heads=cfg.model.sentence_local_heads,
-                readout_attention_init=cfg.model.hier_readout_attention_init,
-                use_section_title_embedding=use_section_title_embedding,
-                num_section_title_types=_num_section_title_types_from_cfg(cfg),
-            ).to(device)
-            dual_text_fusion = DualTextFusion(
-                dim=cfg.model.feat_dim,
-                dropout=cfg.model.text_dual_fusion_dropout,
-            ).to(device)
+    pool_txt, text_graph_encoder, hier_text_branch, dual_text_fusion = _build_text_modules(cfg, device)
 
     moe = MoEFusion(
         dim=cfg.model.feat_dim,
@@ -1001,9 +1097,11 @@ def train_one_split(cfg):
                     clamp_nonneg=cfg.loss.mmd_clamp_nonneg,
                 )
 
-                if text_mode == "concept_graph" and text_use_graph_structure:
-                    concept_nodes_s = _collect_node_type_features(txt_s_nodes, txt_s, "concept")
-                    concept_nodes_t = _collect_node_type_features(txt_t_nodes, txt_t, "concept")
+                if text_mode in {"concept_graph", "dual_text"} and text_use_graph_structure:
+                    graph_payloads_s = _graph_payloads_for_text_mode(txt_s, text_mode)
+                    graph_payloads_t = _graph_payloads_for_text_mode(txt_t, text_mode)
+                    concept_nodes_s = _collect_node_type_features(txt_s_nodes, graph_payloads_s, "concept")
+                    concept_nodes_t = _collect_node_type_features(txt_t_nodes, graph_payloads_t, "concept")
                     if concept_nodes_s is not None and concept_nodes_t is not None:
                         loss_concept = mmd_rbf(
                             concept_nodes_s,
@@ -1167,44 +1265,9 @@ def load_and_eval(cfg, ckpt_path: str):
 
     text_mode = getattr(cfg.data, "text_mode", "sentence_pt")
     text_use_graph_structure = bool(getattr(cfg.data, "text_use_graph_structure", False))
-    if text_use_graph_structure and not _graph_mode_uses_structure(text_mode):
-        raise ValueError("text_use_graph_structure=True requires text_mode='hierarchy_graph' or 'concept_graph'.")
-    use_section_title_embedding = bool(getattr(cfg.model, "use_section_title_embedding", False))
+    _validate_text_graph_structure(text_mode, text_use_graph_structure)
 
-    pool_txt = None
-    text_graph_encoder = None
-    hier_text_branch = None
-    dual_text_fusion = None
-    if _graph_mode_uses_structure(text_mode) and text_use_graph_structure:
-        text_graph_encoder = TextHierarchyGraphEncoder(
-            dim=cfg.model.feat_dim,
-            num_node_types=_text_graph_num_node_types(cfg),
-            num_base_relations=_text_graph_num_base_relations(cfg),
-            num_layers=cfg.model.text_graph_layers,
-            dropout=cfg.model.text_graph_dropout,
-            use_next_edges=cfg.model.text_graph_use_next_edges,
-        ).to(device)
-    else:
-        pool_txt = AttentionPooling(
-            dim=cfg.model.feat_dim,
-            hidden=cfg.model.attn_pool_hidden,
-            dropout=cfg.model.attn_pool_dropout,
-        ).to(device)
-        if text_mode == "dual_text":
-            hier_text_branch = HierTextBranch(
-                dim=cfg.model.feat_dim,
-                hidden=cfg.model.hier_readout_hidden,
-                dropout=cfg.model.hier_readout_dropout,
-                sentence_local_layers=cfg.model.sentence_local_layers,
-                sentence_local_heads=cfg.model.sentence_local_heads,
-                readout_attention_init=cfg.model.hier_readout_attention_init,
-                use_section_title_embedding=use_section_title_embedding,
-                num_section_title_types=_num_section_title_types_from_cfg(cfg),
-            ).to(device)
-            dual_text_fusion = DualTextFusion(
-                dim=cfg.model.feat_dim,
-                dropout=cfg.model.text_dual_fusion_dropout,
-            ).to(device)
+    pool_txt, text_graph_encoder, hier_text_branch, dual_text_fusion = _build_text_modules(cfg, device)
 
     moe = MoEFusion(
         dim=cfg.model.feat_dim,
