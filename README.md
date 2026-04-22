@@ -41,6 +41,9 @@ Ontologies: F:\Tasks\Ontologies\processed
 For graph-structured concept text, set `data.text_use_graph_structure: true`.
 For the newest ablations, `dual_text` keeps raw sentence semantics and adds the
 concept graph as a supplemental branch.
+For concept-graph auxiliary runs, cap `model.text_dual_graph_weight_max` around
+`0.2` and keep `loss.dual_text_graph_weight_target` around `0.1`. The current
+ablation runner writes these auxiliary runs with an `auxgw20` experiment tag.
 
 ## Current Ontology Resources
 

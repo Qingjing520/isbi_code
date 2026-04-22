@@ -154,6 +154,9 @@ model:
     - Summary of Sections
     - Intraoperative Consultation
   text_dual_fusion_dropout: 0.1
+  # dual_text graph branch should be auxiliary rather than replacing raw sentence semantics.
+  # Keep 1.0 to reproduce old unrestricted fusion; use 0.2-0.3 for concept-graph auxiliary runs.
+  text_dual_graph_weight_max: 1.0
 
 loss:
   warmup_epochs: 3
@@ -168,9 +171,9 @@ loss:
   gamma_text_topology: 0.05
   # dual_text 专用，可选 gate 正则。
   # fusion_gate 是 sentence 分支权重，所以 graph 分支权重 = 1 - fusion_gate。
-  # 默认 0.0 表示关闭；做消融时可试 0.01 或 0.02，把 graph 分支目标权重推到 0.2 左右。
+  # 默认 0.0 表示关闭；concept graph 辅助运行可试 0.01，把 graph 分支目标权重推到 0.1 左右。
   dual_text_gate_reg_weight: 0.0
-  dual_text_graph_weight_target: 0.2
+  dual_text_graph_weight_target: 0.1
   mmd_num_kernels: 3
   mmd_sigma_multipliers:
     - 0.5

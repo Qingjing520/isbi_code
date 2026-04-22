@@ -549,6 +549,7 @@ def _build_text_modules(cfg, device: torch.device):
         dual_text_fusion = DualTextFusion(
             dim=cfg.model.feat_dim,
             dropout=cfg.model.text_dual_fusion_dropout,
+            graph_weight_max=float(getattr(cfg.model, "text_dual_graph_weight_max", 1.0)),
         ).to(device)
     elif _graph_mode_uses_structure(text_mode) and text_use_graph_structure:
         text_graph_encoder = TextHierarchyGraphEncoder(

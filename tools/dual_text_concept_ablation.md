@@ -78,3 +78,4 @@ Practical default for the next round:
 - KIRC: prefer `ncit_do`; it was the best AUC variant and nearly tied the old raw-text dual baseline.
 - BRCA: prefer `ncit_snomed_mapped` only as the concept-graph candidate; it was best among ontology variants but still below the old raw-text dual baseline.
 - Avoid promoting `full_multi_ontology` as the default until BRCA concept noise and fusion behavior are audited.
+- Keep concept graph auxiliary: generated ablation configs cap `text_dual_graph_weight_max` at `0.2` and use `dual_text_graph_weight_target: 0.1`, so the raw sentence branch remains the primary semantic carrier. New auxiliary runs write to experiment directories with the `auxgw20` tag to avoid overwriting the earlier unrestricted-fusion results.

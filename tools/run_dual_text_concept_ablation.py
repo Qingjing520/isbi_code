@@ -20,6 +20,9 @@ ONTOLOGY_PROCESSED_DIR = Path(r"F:\Tasks\Ontologies\processed")
 ONTOLOGY_ABLATION_DIR = ONTOLOGY_PROCESSED_DIR / "ablations"
 OUTPUT_ROOT = REPO_ROOT / "pathology_report_extraction" / "Output"
 LOG_ROOT = REPO_ROOT / "experiments" / "dual_text_concept_graph_ablation_logs"
+AUX_GRAPH_WEIGHT_MAX = 0.2
+AUX_GRAPH_WEIGHT_TARGET = 0.1
+EXPERIMENT_TAG = "auxgw20"
 
 VARIANTS = {
     "ncit_only": ONTOLOGY_ABLATION_DIR / "ncit_only_ontology.json",
@@ -59,6 +62,10 @@ def load_json(path: Path) -> dict[str, Any]:
 def write_json(path: Path, payload: dict[str, Any]) -> None:
     ensure_dir(path.parent)
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def experiment_name(dataset: str, variant: str) -> str:
+    return f"{dataset.lower()}_dual_text_concept_graph_{variant}_{EXPERIMENT_TAG}_3splits_nw0"
 
 
 def run_command(name: str, args: list[str], log_path: Path) -> None:
@@ -190,8 +197,8 @@ def build_manifest(dataset: str, variant: str, split_idx: int, graph_dir: Path) 
 
 def write_train_config(dataset: str, variant: str, graph_dir: Path, manifest_template: str) -> Path:
     cfg = DATASETS[dataset]
-    config_path = REPO_ROOT / "configs" / "generated" / f"{dataset.lower()}_{variant}_dual_text_concept_graph.yaml"
-    exp_dir = REPO_ROOT / "experiments" / f"{dataset.lower()}_dual_text_concept_graph_{variant}_3splits_nw0"
+    config_path = REPO_ROOT / "configs" / "generated" / f"{dataset.lower()}_{variant}_dual_text_concept_graph_{EXPERIMENT_TAG}.yaml"
+    exp_dir = REPO_ROOT / "experiments" / experiment_name(dataset, variant)
     payload = {
         "seed": 23,
         "data": {
@@ -255,6 +262,7 @@ def write_train_config(dataset: str, variant: str, graph_dir: Path, manifest_tem
                 "Intraoperative Consultation",
             ],
             "text_dual_fusion_dropout": 0.1,
+            "text_dual_graph_weight_max": AUX_GRAPH_WEIGHT_MAX,
         },
         "loss": {
             "warmup_epochs": 3,
@@ -265,7 +273,7 @@ def write_train_config(dataset: str, variant: str, graph_dir: Path, manifest_tem
             "gamma_topo": 0.1,
             "gamma_text_topology": 0.05,
             "dual_text_gate_reg_weight": 0.01,
-            "dual_text_graph_weight_target": 0.2,
+            "dual_text_graph_weight_target": AUX_GRAPH_WEIGHT_TARGET,
             "mmd_num_kernels": 3,
             "mmd_sigma_multipliers": [0.5, 1.0, 2.0],
             "mmd_unbiased": True,
@@ -293,7 +301,7 @@ def write_train_config(dataset: str, variant: str, graph_dir: Path, manifest_tem
 
 def train_variant(dataset: str, variant: str, config_path: Path, manifest_template: str, num_splits: int, force: bool) -> Path:
     cfg = DATASETS[dataset]
-    output_root = REPO_ROOT / "experiments" / f"{dataset.lower()}_dual_text_concept_graph_{variant}_3splits_nw0"
+    output_root = REPO_ROOT / "experiments" / experiment_name(dataset, variant)
     args = [
         str(PYTHON),
         str(REPO_ROOT / "run_main_splits.py"),
@@ -326,7 +334,7 @@ def aggregate_results(datasets: list[str], variants: list[str]) -> None:
     rows: list[dict[str, Any]] = []
     for dataset in datasets:
         for variant in variants:
-            summary_path = REPO_ROOT / "experiments" / f"{dataset.lower()}_dual_text_concept_graph_{variant}_3splits_nw0" / "summary.json"
+            summary_path = REPO_ROOT / "experiments" / experiment_name(dataset, variant) / "summary.json"
             if not summary_path.exists():
                 rows.append({"dataset": dataset, "variant": variant, "status": "missing"})
                 continue

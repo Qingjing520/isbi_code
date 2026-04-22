@@ -50,7 +50,7 @@ The next useful experiment is a smaller fusion ablation:
 | `dual_text` raw baseline rerun | Reconfirm current baseline under the same runner and current code. |
 | `dual_text + ncit_do` for KIRC | Validate the near-tie with old KIRC dual-text baseline. |
 | `dual_text + ncit_snomed_mapped` for BRCA | Test the least-bad BRCA ontology variant. |
-| Gate regularization sweep | Try graph targets below 0.2 for BRCA or add a warmup where sentence branch dominates longer. |
+| Auxiliary graph fusion sweep | Cap graph branch contribution at 0.1-0.2 and keep sentence text as the dominant semantic branch. |
 | Concept noise audit for BRCA | Inspect high-weight BRCA graph cases where predictions flip incorrectly. |
 
 Source summaries:

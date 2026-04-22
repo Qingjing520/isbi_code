@@ -64,6 +64,7 @@ class ModelConfig:
     use_section_title_embedding: bool = False
     section_title_vocab: List[str] = None
     text_dual_fusion_dropout: float = 0.10
+    text_dual_graph_weight_max: float = 1.0
 
 
 @dataclass
@@ -204,6 +205,7 @@ def get_config(path: str) -> Config:
                 ],
             ),
             text_dual_fusion_dropout=float(model.get("text_dual_fusion_dropout", 0.10)),
+            text_dual_graph_weight_max=float(model.get("text_dual_graph_weight_max", 1.0)),
         ),
         loss=LossConfig(
             alpha_txt=float(loss.get("alpha_txt", 0.5)),
