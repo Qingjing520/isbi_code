@@ -21,9 +21,9 @@ Thumbs.db
 experiments/
 *.log
 configs/generated/
-experiment_records/dual_text_concept_graph_ablation/summary.csv
-experiment_records/dual_text_concept_graph_ablation/summary.json
-experiment_records/dual_text_concept_graph_ablation/summary.md
+experiment_records/comparisons/cross_dataset/dual_text_concept_graph_ablation/summary.csv
+experiment_records/comparisons/cross_dataset/dual_text_concept_graph_ablation/summary.json
+experiment_records/comparisons/cross_dataset/dual_text_concept_graph_ablation/summary.md
 
 # Pathology report pipeline outputs
 pathology_report_extraction/Output/

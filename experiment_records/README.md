@@ -1,16 +1,39 @@
 # Experiment Records
 
-This directory stores lightweight experiment summaries that are safe to version on GitHub.
+This directory stores stable, lightweight experiment evidence that is safe to
+version on GitHub.  It is for curated summaries and cross-run comparisons, not
+for raw training artifacts.
 
-- Keep small summary artifacts here, such as `README.md`, `.csv`, and `.json`.
-- Keep raw checkpoints, long logs, and other large files under the local `experiments/` directory, which remains gitignored.
-- Cross-dataset summary: `text_mode_comparison_brca_kirc.md`
-- Paper-style writeup draft: `text_mode_comparison_brca_kirc_paper_ready.md`
-- BRCA hierarchy-graph exploration log: `brca_hierarchy_graph_exploration.md`
-- BRCA fair comparison on aligned splits 0-9: `brca_sentence_vs_dual_text_10splits/README.md`
-- BRCA dual_text gate-regularization ablation: `brca_dual_text_gate_reg_ablation/README.md`
-- Gate-regularization small grid on BRCA/KIRC aligned splits 0-2: `gate_reg_grid_3splits/README.md`
-- Sample-level dual_text benefit analysis: `dual_text_benefit_analysis/README.md`
-- KIRC fair comparison on aligned splits 0-9: `kirc_sentence_vs_dual_text_10splits/README.md`
-- KIRC dual_text readout_v2 10-split analysis: `kirc_dual_text_readout_v2_10splits/README.md`
-- KIRC dual_text gate-regularization ablation: `kirc_dual_text_gate_reg_ablation/README.md`
+## Directory Roles
+
+```text
+experiment_records/
+  comparisons/
+    BRCA/
+    KIRC/
+    cross_dataset/
+  reports/
+    BRCA/
+    cross_dataset/
+    ontology/
+    repository/
+```
+
+- `comparisons/` contains small CSV/JSON/README bundles for paper-facing or
+  cross-method comparisons.
+- `reports/` contains final Markdown writeups, interpretation notes, and layout
+  documentation.
+- Raw checkpoints, per-epoch logs, configs, and split-level run outputs belong
+  under `experiments/<dataset>/<method>/runs/`.
+- Method-local split indexes belong under
+  `experiments/<dataset>/<method>/records/split_results.*`.
+
+## Current Records
+
+- BRCA comparisons: `comparisons/BRCA/`
+- KIRC comparisons: `comparisons/KIRC/`
+- Cross-dataset comparisons and benefit analysis:
+  `comparisons/cross_dataset/`
+- Ontology/concept-graph reports: `reports/ontology/`
+- Paper-ready text-mode reports: `reports/cross_dataset/`
+- Experiment tree layout notes: `reports/repository/experiment_tree_layout.md`

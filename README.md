@@ -93,7 +93,7 @@ F:\Anaconda\envs\pytorch\python.exe F:\Tasks\isbi_code\tools\watch_dual_text_con
 The latest stable report is:
 
 ```text
-experiment_records\dual_text_concept_graph_ablation_final.md
+experiment_records\reports\ontology\dual_text_concept_graph_ablation_final.md
 ```
 
 High-level conclusion:
