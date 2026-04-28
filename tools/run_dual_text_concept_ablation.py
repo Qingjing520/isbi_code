@@ -24,7 +24,7 @@ METHOD_DIR = "sentence-hierarchical-graph-ontology"
 LOG_ROOT = EXPERIMENTS_ROOT / "KIRC" / METHOD_DIR / "records" / "shared_dual_text_concept_graph_ablation_logs"
 AUX_GRAPH_WEIGHT_MAX = 0.2
 AUX_GRAPH_WEIGHT_TARGET = 0.1
-EXPERIMENT_TAG = "auxgw20"
+EXPERIMENT_TAG = "auxgw20_residual_sectiontitle"
 
 VARIANTS = {
     "ncit_only": ONTOLOGY_ABLATION_DIR / "ncit_only_ontology.json",
@@ -250,7 +250,7 @@ def write_train_config(dataset: str, variant: str, graph_dir: Path, manifest_tem
             "hier_readout_hidden": 256,
             "hier_readout_dropout": 0.1,
             "hier_readout_attention_init": -0.5,
-            "use_section_title_embedding": False,
+            "use_section_title_embedding": True,
             "section_title_vocab": [
                 "Document Body",
                 "Diagnosis",
@@ -269,6 +269,7 @@ def write_train_config(dataset: str, variant: str, graph_dir: Path, manifest_tem
             ],
             "text_dual_fusion_dropout": 0.1,
             "text_dual_graph_weight_max": AUX_GRAPH_WEIGHT_MAX,
+            "text_dual_fusion_mode": "residual",
         },
         "loss": {
             "warmup_epochs": 3,

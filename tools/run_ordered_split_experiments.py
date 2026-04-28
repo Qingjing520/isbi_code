@@ -21,8 +21,12 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 PYTHON = Path(r"F:\Anaconda\envs\pytorch\python.exe")
 EXPERIMENTS_ROOT = REPO_ROOT / "experiments"
 OUTPUT_ROOT = REPO_ROOT / "pathology_report_extraction" / "Output"
-CONFIG_ROOT = REPO_ROOT / "configs" / "generated" / "ordered_5split"
-DEFAULT_ONTOLOGY_VARIANT = "ncit_snomed_mapped"
+CONFIG_ROOT = REPO_ROOT / "configs" / "generated" / "ordered_splits"
+DEFAULT_ONTOLOGY_VARIANT = "ncit_do"
+DEFAULT_HIERARCHY_GRAPH_WEIGHT_MAX = 0.2
+DEFAULT_ONTOLOGY_GRAPH_WEIGHT_MAX = 0.2
+DEFAULT_GRAPH_WEIGHT_TARGET = 0.1
+DEFAULT_DUAL_TEXT_FUSION_MODE = "residual"
 
 DATASET_ORDER = ("BRCA", "KIRC", "LUSC")
 METHOD_ORDER = (
@@ -37,6 +41,13 @@ METHOD_LABELS = {
     "sentence-ontology": "sentence + ontology",
     "sentence-hierarchical-graph": "sentence + hierarchical graph",
     "sentence-hierarchical-graph-ontology": "sentence + hierarchical graph + ontology",
+}
+
+LEGACY_RUN_PATTERNS = {
+    ("LUSC", "sentence-only"): (
+        r"^LUSC_(\d+)splits_sentence_only$",
+        r"^LUSC_(\d+)splits_sentence_mode$",
+    ),
 }
 
 DATASETS = {
@@ -70,6 +81,7 @@ class Task:
     config_path: Path
     split_indices: list[int]
     completed_before: list[int]
+    experiment_tag: str = ""
     graph_manifest_template: str = ""
 
     @property
@@ -79,7 +91,7 @@ class Task:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run clean, ordered 5-split experiments in the organized experiments tree."
+        description="Run clean, ordered split experiments in the organized experiments tree."
     )
     parser.add_argument("--datasets", nargs="+", default=list(DATASET_ORDER), choices=DATASET_ORDER)
     parser.add_argument("--methods", nargs="+", default=list(METHOD_ORDER), choices=METHOD_ORDER)
@@ -99,9 +111,53 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument("--ontology_variant", type=str, default=DEFAULT_ONTOLOGY_VARIANT)
+    parser.add_argument(
+        "--hierarchy_graph_weight_max",
+        type=float,
+        default=DEFAULT_HIERARCHY_GRAPH_WEIGHT_MAX,
+        help="Maximum hierarchy graph residual weight in dual-text fusion.",
+    )
+    parser.add_argument(
+        "--ontology_graph_weight_max",
+        type=float,
+        default=DEFAULT_ONTOLOGY_GRAPH_WEIGHT_MAX,
+        help="Maximum ontology/concept graph residual weight in dual-text fusion.",
+    )
+    parser.add_argument(
+        "--graph_weight_target",
+        type=float,
+        default=DEFAULT_GRAPH_WEIGHT_TARGET,
+        help="Gate regularization target for the auxiliary graph branch.",
+    )
+    parser.add_argument(
+        "--fusion_mode",
+        type=str,
+        default=DEFAULT_DUAL_TEXT_FUSION_MODE,
+        choices=["convex", "residual"],
+        help="dual_text fusion mode. residual keeps sentence features as the trunk.",
+    )
+    parser.set_defaults(use_section_title_embedding=True)
+    parser.add_argument(
+        "--use_section_title_embedding",
+        dest="use_section_title_embedding",
+        action="store_true",
+        help="Use section title embeddings as section-role features.",
+    )
+    parser.add_argument(
+        "--no_section_title_embedding",
+        dest="use_section_title_embedding",
+        action="store_false",
+        help="Disable section title embeddings.",
+    )
     parser.add_argument("--train_num_workers", type=int, default=0)
     parser.add_argument("--force_train", action="store_true")
     parser.add_argument("--dry_run", action="store_true")
+    parser.add_argument(
+        "--experiment_tag",
+        type=str,
+        default="",
+        help="Optional tag inserted into run/config names, e.g. auxgw01_sectiontitle_residual.",
+    )
     return parser.parse_args()
 
 
@@ -117,17 +173,24 @@ def method_root(dataset: str, method: str) -> Path:
     return EXPERIMENTS_ROOT / dataset / method
 
 
-def run_dir(dataset: str, method: str) -> Path:
-    return run_dir_for_count(dataset, method, 0)
+def sanitize_tag(tag: str) -> str:
+    tag = re.sub(r"[^a-zA-Z0-9_+-]+", "_", str(tag or "").strip())
+    return tag.strip("_")
 
 
-def run_prefix(dataset: str, method: str) -> str:
-    return f"{dataset.lower()}_{method.replace('-', '_')}_"
+def run_dir(dataset: str, method: str, experiment_tag: str = "") -> Path:
+    return run_dir_for_count(dataset, method, 0, experiment_tag=experiment_tag)
 
 
-def run_dir_for_count(dataset: str, method: str, count: int) -> Path:
+def run_prefix(dataset: str, method: str, experiment_tag: str = "") -> str:
+    tag = sanitize_tag(experiment_tag)
+    tag_part = f"{tag}_" if tag else ""
+    return f"{dataset.lower()}_{method.replace('-', '_')}_{tag_part}"
+
+
+def run_dir_for_count(dataset: str, method: str, count: int, experiment_tag: str = "") -> Path:
     count = max(0, int(count))
-    return method_root(dataset, method) / "runs" / f"{run_prefix(dataset, method)}{count}splits"
+    return method_root(dataset, method) / "runs" / f"{run_prefix(dataset, method, experiment_tag=experiment_tag)}{count}splits"
 
 
 def completed_split_indices(run_dir: Path) -> list[int]:
@@ -145,12 +208,12 @@ def completed_split_indices(run_dir: Path) -> list[int]:
     return sorted(set(indices))
 
 
-def find_existing_run_dir(dataset: str, method: str) -> Path | None:
+def find_existing_run_dir(dataset: str, method: str, experiment_tag: str = "") -> Path | None:
     runs_root = method_root(dataset, method) / "runs"
     if not runs_root.exists():
         return None
 
-    prefix = run_prefix(dataset, method)
+    prefix = run_prefix(dataset, method, experiment_tag=experiment_tag)
     candidates: list[tuple[int, int, float, Path]] = []
     for child in runs_root.iterdir():
         if not child.is_dir() or child.name.startswith("_"):
@@ -166,10 +229,12 @@ def find_existing_run_dir(dataset: str, method: str) -> Path | None:
             candidates.append((1, max(suffix_count, len(completed)), child.stat().st_mtime, child))
             continue
 
-        # Compatibility with the preserved legacy LUSC sentence-only folder.
-        name = child.name.lower()
-        if dataset.lower() in name and ("sentence" in name or method.replace("-", "_") in name):
-            candidates.append((0, len(completed), child.stat().st_mtime, child))
+        for pattern in LEGACY_RUN_PATTERNS.get((dataset, method), ()):
+            legacy_match = re.match(pattern, child.name, flags=re.IGNORECASE)
+            if legacy_match:
+                suffix_count = int(legacy_match.group(1))
+                candidates.append((1, max(suffix_count, len(completed)), child.stat().st_mtime, child))
+                break
 
     if not candidates:
         return None
@@ -177,8 +242,13 @@ def find_existing_run_dir(dataset: str, method: str) -> Path | None:
     return candidates[0][3]
 
 
-def planned_run_dir(dataset: str, method: str) -> Path:
-    return find_existing_run_dir(dataset, method) or run_dir_for_count(dataset, method, 0)
+def planned_run_dir(dataset: str, method: str, experiment_tag: str = "") -> Path:
+    return find_existing_run_dir(dataset, method, experiment_tag=experiment_tag) or run_dir_for_count(
+        dataset,
+        method,
+        0,
+        experiment_tag=experiment_tag,
+    )
 
 
 def task_split_indices(run_dir_path: Path, args: argparse.Namespace) -> tuple[list[int], list[int]]:
@@ -205,8 +275,22 @@ def hierarchy_graph_dir(dataset: str) -> Path:
     return OUTPUT_ROOT / "text_hierarchy_graphs_masked" / dataset
 
 
+def sentence_ontology_graph_dir(dataset: str, variant: str) -> Path:
+    return OUTPUT_ROOT / "text_sentence_ontology_graphs_ablation" / variant / dataset
+
+
 def concept_graph_dir(dataset: str, variant: str) -> Path:
     return OUTPUT_ROOT / "text_concept_graphs_ablation" / variant / dataset
+
+
+def sentence_ontology_manifest_path(dataset: str, variant: str, split_idx: int) -> Path:
+    return (
+        OUTPUT_ROOT
+        / "manifests"
+        / "ablation"
+        / variant
+        / f"{dataset.lower()}_sentence_ontology_graph_manifest_split{split_idx}.csv"
+    )
 
 
 def concept_manifest_path(dataset: str, variant: str, split_idx: int) -> Path:
@@ -219,9 +303,8 @@ def concept_manifest_path(dataset: str, variant: str, split_idx: int) -> Path:
     )
 
 
-def build_concept_manifest(dataset: str, variant: str, split_idx: int, graph_dir: Path) -> Path:
+def build_graph_manifest(dataset: str, split_idx: int, graph_dir: Path, output_csv: Path) -> Path:
     cfg = DATASETS[dataset]
-    output_csv = concept_manifest_path(dataset, variant, split_idx)
     ensure_dir(output_csv.parent)
     args = [
         str(PYTHON),
@@ -237,24 +320,35 @@ def build_concept_manifest(dataset: str, variant: str, split_idx: int, graph_dir
         "--output_csv",
         str(output_csv),
     ]
-    print(f"[{now()}] build manifest {dataset} {variant} split={split_idx}", flush=True)
+    print(f"[{now()}] build manifest {dataset} split={split_idx} output={output_csv.name}", flush=True)
     completed = subprocess.run(args, cwd=REPO_ROOT, text=True)
     if completed.returncode != 0:
         raise RuntimeError(f"prepare_text_graph_manifest failed for {dataset} split {split_idx}")
     return output_csv
 
 
-def ensure_concept_manifests(dataset: str, variant: str, indices: list[int], graph_dir: Path) -> list[Path]:
+def ensure_graph_manifests(
+    dataset: str,
+    indices: list[int],
+    graph_dir: Path,
+    manifest_path_fn,
+) -> list[Path]:
     manifests: list[Path] = []
     for split_idx in indices:
-        manifest = concept_manifest_path(dataset, variant, split_idx)
+        manifest = manifest_path_fn(dataset, split_idx)
         if not manifest.exists():
-            manifest = build_concept_manifest(dataset, variant, split_idx, graph_dir)
+            manifest = build_graph_manifest(dataset, split_idx, graph_dir, manifest)
         manifests.append(manifest)
     return manifests
 
 
-def base_payload(dataset: str, exp_dir: Path) -> dict[str, Any]:
+def base_payload(
+    dataset: str,
+    exp_dir: Path,
+    *,
+    use_section_title_embedding: bool = False,
+    fusion_mode: str = "convex",
+) -> dict[str, Any]:
     cfg = DATASETS[dataset]
     return {
         "seed": 23,
@@ -301,7 +395,7 @@ def base_payload(dataset: str, exp_dir: Path) -> dict[str, Any]:
             "hier_readout_hidden": 256,
             "hier_readout_dropout": 0.1,
             "hier_readout_attention_init": -0.5,
-            "use_section_title_embedding": False,
+            "use_section_title_embedding": bool(use_section_title_embedding),
             "section_title_vocab": [
                 "Document Body",
                 "Diagnosis",
@@ -320,6 +414,7 @@ def base_payload(dataset: str, exp_dir: Path) -> dict[str, Any]:
             ],
             "text_dual_fusion_dropout": 0.1,
             "text_dual_graph_weight_max": 1.0,
+            "text_dual_fusion_mode": str(fusion_mode),
         },
         "loss": {
             "warmup_epochs": 3,
@@ -353,12 +448,49 @@ def base_payload(dataset: str, exp_dir: Path) -> dict[str, Any]:
     }
 
 
-def write_config(dataset: str, method: str, variant: str, exp_dir: Path, graph_manifest_template: str = "") -> Path:
-    payload = base_payload(dataset, exp_dir)
+def write_config(
+    dataset: str,
+    method: str,
+    variant: str,
+    exp_dir: Path,
+    graph_manifest_template: str = "",
+    *,
+    hierarchy_graph_weight_max: float = DEFAULT_HIERARCHY_GRAPH_WEIGHT_MAX,
+    ontology_graph_weight_max: float = DEFAULT_ONTOLOGY_GRAPH_WEIGHT_MAX,
+    graph_weight_target: float = DEFAULT_GRAPH_WEIGHT_TARGET,
+    use_section_title_embedding: bool = True,
+    fusion_mode: str = DEFAULT_DUAL_TEXT_FUSION_MODE,
+    experiment_tag: str = "",
+) -> Path:
+    payload = base_payload(
+        dataset,
+        exp_dir,
+        use_section_title_embedding=(method != "sentence-only" and use_section_title_embedding),
+        fusion_mode=fusion_mode,
+    )
     cfg = DATASETS[dataset]
 
     if method == "sentence-only":
         pass
+    elif method == "sentence-ontology":
+        graph_dir = sentence_ontology_graph_dir(dataset, variant)
+        payload["data"].update(
+            {
+                "text_dir": str(cfg["sentence_text_dir"]),
+                "text_mode": "dual_text",
+                "sentence_text_dir": str(cfg["sentence_text_dir"]),
+                "graph_text_dir": str(graph_dir),
+                "graph_manifest_csv": graph_manifest_template.format(split_idx=0),
+                "text_use_graph_structure": True,
+            }
+        )
+        payload["model"]["text_graph_num_node_types"] = 3
+        payload["model"]["text_graph_num_base_relations"] = 5
+        payload["model"]["text_dual_graph_weight_max"] = float(ontology_graph_weight_max)
+        payload["loss"]["alpha_concept"] = 0.2
+        payload["loss"]["gamma_text_topology"] = 0.03
+        payload["loss"]["dual_text_gate_reg_weight"] = 0.01
+        payload["loss"]["dual_text_graph_weight_target"] = float(graph_weight_target)
     elif method == "sentence-hierarchical-graph":
         graph_dir = hierarchy_graph_dir(dataset)
         payload["data"].update(
@@ -373,6 +505,10 @@ def write_config(dataset: str, method: str, variant: str, exp_dir: Path, graph_m
         )
         payload["model"]["text_graph_num_node_types"] = 3
         payload["model"]["text_graph_num_base_relations"] = 2
+        payload["model"]["text_dual_graph_weight_max"] = float(hierarchy_graph_weight_max)
+        payload["loss"]["gamma_text_topology"] = 0.03
+        payload["loss"]["dual_text_gate_reg_weight"] = 0.01
+        payload["loss"]["dual_text_graph_weight_target"] = float(graph_weight_target)
     elif method == "sentence-hierarchical-graph-ontology":
         graph_dir = concept_graph_dir(dataset, variant)
         payload["data"].update(
@@ -387,15 +523,17 @@ def write_config(dataset: str, method: str, variant: str, exp_dir: Path, graph_m
         )
         payload["model"]["text_graph_num_node_types"] = 4
         payload["model"]["text_graph_num_base_relations"] = 6
-        payload["model"]["text_dual_graph_weight_max"] = 0.2
+        payload["model"]["text_dual_graph_weight_max"] = float(ontology_graph_weight_max)
         payload["loss"]["alpha_concept"] = 0.2
         payload["loss"]["gamma_text_topology"] = 0.05
         payload["loss"]["dual_text_gate_reg_weight"] = 0.01
-        payload["loss"]["dual_text_graph_weight_target"] = 0.1
+        payload["loss"]["dual_text_graph_weight_target"] = float(graph_weight_target)
     else:
         raise ValueError(f"Cannot write config for unsupported method: {method}")
 
-    config_path = CONFIG_ROOT / f"{dataset.lower()}_{method.replace('-', '_')}.yaml"
+    tag = sanitize_tag(experiment_tag)
+    tag_part = f"_{tag}" if tag else ""
+    config_path = CONFIG_ROOT / f"{dataset.lower()}_{method.replace('-', '_')}{tag_part}.yaml"
     ensure_dir(config_path.parent)
     config_path.write_text(yaml.safe_dump(payload, sort_keys=False, allow_unicode=True), encoding="utf-8")
     return config_path
@@ -409,10 +547,10 @@ def unavailable_reason(dataset: str, method: str, variant: str, indices: list[in
     if method == "sentence-only":
         return ""
     if method == "sentence-ontology":
-        return (
-            "not implemented as a separate data product yet; current ontology data is represented "
-            "as concept graphs and should be compared under sentence-hierarchical-graph-ontology"
-        )
+        graph_dir = sentence_ontology_graph_dir(dataset, variant)
+        if not graph_dir.exists():
+            return f"missing sentence-ontology graph directory: {graph_dir}"
+        return ""
     if method == "sentence-hierarchical-graph":
         graph_dir = hierarchy_graph_dir(dataset)
         if not graph_dir.exists():
@@ -438,7 +576,7 @@ def write_skipped_records(dataset: str, method: str, indices: list[int], reason:
             "status": "skipped",
             "acc": "",
             "auc": "",
-            "source_type": "ordered_5split_runner",
+            "source_type": "ordered_split_runner",
             "source_path": "",
             "text_mode": "",
             "ontology_variant": "",
@@ -544,7 +682,7 @@ def run_task(task: Task, args: argparse.Namespace) -> None:
         cmd.append("--force_rerun")
 
     ensure_dir(task.run_dir)
-    log_path = task.run_dir / "ordered_5split_runner.log"
+    log_path = task.run_dir / "ordered_split_runner.log"
     with log_path.open("a", encoding="utf-8") as log:
         log.write(f"\n[{now()}] START {task.dataset} {task.method}\n")
         log.write(" ".join(cmd) + "\n\n")
@@ -648,7 +786,12 @@ def rename_run_dir_to_completed_count(task: Task) -> Task:
     if not completed:
         return task
 
-    target = run_dir_for_count(task.dataset, task.method, len(completed))
+    target = run_dir_for_count(
+        task.dataset,
+        task.method,
+        len(completed),
+        experiment_tag=task.experiment_tag,
+    )
     if task.run_dir.resolve() == target.resolve():
         return task
     if target.exists():
@@ -678,7 +821,7 @@ def mean_std(values: list[float]) -> str:
 
 
 def write_report(tasks: list[Task], skipped: list[dict[str, Any]], variant: str) -> None:
-    report_dir = REPO_ROOT / "experiment_records" / "reports" / "ordered_5split"
+    report_dir = REPO_ROOT / "experiment_records" / "reports" / "ordered_splits"
     ensure_dir(report_dir)
     rows: list[dict[str, str]] = []
     for task in tasks:
@@ -715,7 +858,7 @@ def write_report(tasks: list[Task], skipped: list[dict[str, Any]], variant: str)
         writer.writerows(rows)
 
     lines = [
-        "# Ordered 5-Split Experiment Summary",
+        "# Ordered Split Experiment Summary",
         "",
         f"Generated: {now()}",
         f"Ontology variant: `{variant}`",
@@ -741,6 +884,7 @@ def serialize_tasks(tasks: list[Task]) -> list[dict[str, Any]]:
             "graph_manifest_template": task.graph_manifest_template,
             "completed_before": task.completed_before,
             "requested_split_indices": task.split_indices,
+            "experiment_tag": task.experiment_tag,
         }
         for task in tasks
     ]
@@ -755,7 +899,7 @@ def main() -> int:
         for method in args.methods:
             ensure_dir(method_root(dataset, method) / "runs")
             ensure_dir(method_root(dataset, method) / "records")
-            current_run_dir = planned_run_dir(dataset, method)
+            current_run_dir = planned_run_dir(dataset, method, experiment_tag=args.experiment_tag)
             indices, completed_before = task_split_indices(current_run_dir, args)
             reason = unavailable_reason(dataset, method, args.ontology_variant, indices)
             if reason:
@@ -774,10 +918,39 @@ def main() -> int:
                 continue
 
             manifest_template = ""
-            if method == "sentence-hierarchical-graph-ontology":
+            if method == "sentence-ontology":
+                graph_dir = sentence_ontology_graph_dir(dataset, args.ontology_variant)
+                if not args.dry_run:
+                    ensure_graph_manifests(
+                        dataset=dataset,
+                        indices=indices,
+                        graph_dir=graph_dir,
+                        manifest_path_fn=lambda dataset_name, split_idx, variant=args.ontology_variant: sentence_ontology_manifest_path(
+                            dataset_name,
+                            variant,
+                            split_idx,
+                        ),
+                    )
+                manifest_template = str(
+                    OUTPUT_ROOT
+                    / "manifests"
+                    / "ablation"
+                    / args.ontology_variant
+                    / f"{dataset.lower()}_sentence_ontology_graph_manifest_split{{split_idx}}.csv"
+                )
+            elif method == "sentence-hierarchical-graph-ontology":
                 graph_dir = concept_graph_dir(dataset, args.ontology_variant)
                 if not args.dry_run:
-                    ensure_concept_manifests(dataset, args.ontology_variant, indices, graph_dir)
+                    ensure_graph_manifests(
+                        dataset=dataset,
+                        indices=indices,
+                        graph_dir=graph_dir,
+                        manifest_path_fn=lambda dataset_name, split_idx, variant=args.ontology_variant: concept_manifest_path(
+                            dataset_name,
+                            variant,
+                            split_idx,
+                        ),
+                    )
                 manifest_template = str(
                     OUTPUT_ROOT
                     / "manifests"
@@ -786,7 +959,9 @@ def main() -> int:
                     / f"{dataset.lower()}_concept_graph_manifest_split{{split_idx}}.csv"
                 )
 
-            config_path = CONFIG_ROOT / f"{dataset.lower()}_{method.replace('-', '_')}.yaml"
+            tag = sanitize_tag(args.experiment_tag)
+            tag_part = f"_{tag}" if tag else ""
+            config_path = CONFIG_ROOT / f"{dataset.lower()}_{method.replace('-', '_')}{tag_part}.yaml"
             if not args.dry_run:
                 config_path = write_config(
                     dataset=dataset,
@@ -794,6 +969,12 @@ def main() -> int:
                     variant=args.ontology_variant,
                     exp_dir=current_run_dir,
                     graph_manifest_template=manifest_template,
+                    hierarchy_graph_weight_max=args.hierarchy_graph_weight_max,
+                    ontology_graph_weight_max=args.ontology_graph_weight_max,
+                    graph_weight_target=args.graph_weight_target,
+                    use_section_title_embedding=args.use_section_title_embedding,
+                    fusion_mode=args.fusion_mode,
+                    experiment_tag=args.experiment_tag,
                 )
             tasks.append(
                 Task(
@@ -804,6 +985,7 @@ def main() -> int:
                     config_path=config_path,
                     split_indices=indices,
                     completed_before=completed_before,
+                    experiment_tag=args.experiment_tag,
                     graph_manifest_template=manifest_template,
                 )
             )
@@ -815,6 +997,12 @@ def main() -> int:
         "new_splits_per_task": args.num_splits,
         "split_offset": args.split_offset if args.split_offset is not None else "auto",
         "ontology_variant": args.ontology_variant,
+        "experiment_tag": sanitize_tag(args.experiment_tag),
+        "fusion_mode": args.fusion_mode,
+        "use_section_title_embedding": bool(args.use_section_title_embedding),
+        "hierarchy_graph_weight_max": float(args.hierarchy_graph_weight_max),
+        "ontology_graph_weight_max": float(args.ontology_graph_weight_max),
+        "graph_weight_target": float(args.graph_weight_target),
         "tasks": serialize_tasks(tasks),
         "skipped": skipped,
     }
@@ -823,7 +1011,7 @@ def main() -> int:
         print(json.dumps(plan, indent=2, ensure_ascii=False), flush=True)
         return 0
 
-    write_overall_plan(REPO_ROOT / "experiment_records" / "reports" / "ordered_5split" / "plan.json", plan)
+    write_overall_plan(REPO_ROOT / "experiment_records" / "reports" / "ordered_splits" / "plan.json", plan)
 
     for index, task in enumerate(tasks):
         print(f"[{now()}] START {task.dataset} {METHOD_LABELS[task.method]}", flush=True)
@@ -833,11 +1021,11 @@ def main() -> int:
         write_records_from_summary(task, args.ontology_variant)
         write_report(tasks, skipped, args.ontology_variant)
         plan["tasks"] = serialize_tasks(tasks)
-        write_overall_plan(REPO_ROOT / "experiment_records" / "reports" / "ordered_5split" / "plan.json", plan)
+        write_overall_plan(REPO_ROOT / "experiment_records" / "reports" / "ordered_splits" / "plan.json", plan)
         print(f"[{now()}] DONE  {task.dataset} {METHOD_LABELS[task.method]}", flush=True)
 
     write_report(tasks, skipped, args.ontology_variant)
-    print(f"[{now()}] ordered 5-split experiments complete", flush=True)
+    print(f"[{now()}] ordered split experiments complete", flush=True)
     return 0
 
 

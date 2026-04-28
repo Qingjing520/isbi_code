@@ -1,99 +1,51 @@
 seed: 23
 
 data:
-  # =========================
-  # 这一个 yaml 就是训练总配置入口
-  # 以后只改这里，不需要再切换别的 yaml
-  # =========================
+  # Default example: KIRC + concept graph.
+  split_file: "F:\\Tasks\\Split_Table\\KIRC\\split_0.csv"
+  label_file: "F:\\Tasks\\Pathologic_Stage_Label\\KIRC_pathologic_stage.csv"
+  image_dir: "F:\\Tasks\\WSI_extract_features\\KIRC_WSI_extract_features"
+  text_dir: "F:\\Tasks\\isbi_code\\pathology_report_extraction\\Output\\text_concept_graphs_masked\\KIRC"
 
-  # 当前默认示例：
-  # KIRC + NCIt concept graph
-  split_file: F:\Tasks\Split_Table\KIRC\split_0.csv
-  label_file: F:\Tasks\Pathologic_Stage_Label\KIRC_pathologic_stage.csv
-  image_dir: F:\Tasks\WSI_extract_features\KIRC_WSI_extract_features
-  text_dir: F:\Tasks\isbi_code\pathology_report_extraction\Output\text_concept_graphs_masked\KIRC
-
-  # 文本模式四选一：
-  # 1. sentence_pt
-  #    论文原始方式，读取 case-level 句子特征 pt
-  #    例如：
-  #    D:\Tasks\text_extract_features\KIRC_text
-  #    D:\Tasks\text_extract_features\BRCA_text
-  #    D:\Tasks\text_extract_features\LUSC_text
-  #
-  # 2. hierarchy_graph
-  #    当前新增方式，读取层次图 pt 字典
-  #    例如：
-  #    D:\Tasks\isbi_code\pathology_report_extraction\Output\text_hierarchy_graphs_masked\KIRC
-  #    D:\Tasks\isbi_code\pathology_report_extraction\Output\text_hierarchy_graphs_masked\BRCA
-  #
-  # 3. dual_text
-  #    双路文本模式：
-  #    - sentence_text_dir 读取原论文句子特征
-  #    - graph_text_dir 读取层次图
-  #    二者先在文本侧融合，再与 WSI 融合
-  #
-  # 4. concept_graph
-  #    读取 concept-enhanced text graph：
-  #    Document -> Section -> Sentence -> Concept
-  #    推荐配合 text_use_graph_structure: true
+  # Supported text modes:
+  # - sentence_pt: original case-level sentence feature tensor.
+  # - hierarchy_graph: Document/Section/Sentence graph tensor.
+  # - concept_graph: hierarchy graph with ontology concept nodes.
+  # - dual_text: raw sentence branch plus graph branch.
   text_mode: concept_graph
-  sentence_text_dir: F:\Tasks\Text_Sentence_extract_features\KIRC_text
-  graph_text_dir: F:\Tasks\isbi_code\pathology_report_extraction\Output\text_concept_graphs_masked\KIRC
-  # Preferred for hierarchy_graph / concept_graph / dual_text graph branch.
-  # This manifest makes slide -> graph -> label/split mapping explicit.
-  graph_manifest_csv: F:\Tasks\isbi_code\pathology_report_extraction\Output\manifests\kirc_concept_graph_manifest_split0.csv
+  sentence_text_dir: "F:\\Tasks\\Text_Sentence_extract_features\\KIRC_text"
+  graph_text_dir: "F:\\Tasks\\isbi_code\\pathology_report_extraction\\Output\\text_concept_graphs_masked\\KIRC"
 
-  # 在 text_mode: hierarchy_graph / concept_graph 时可使用这个字段
-  # 可选：
-  # - node_features: Document + Section + Sentence 三层节点一起作为文本输入
-  # - sentence_features: 只用句子节点特征
-  # - section_features: 只用 section 节点特征
-  # - document_feature: 只用 document 节点特征（会自动扩成 1 x 512）
+  # Preferred for hierarchy_graph / concept_graph / dual_text graph branch.
+  graph_manifest_csv: "F:\\Tasks\\isbi_code\\pathology_report_extraction\\Output\\manifests\\kirc_concept_graph_manifest_split0.csv"
+
+  # Graph feature choices:
+  # - node_features: Document + Section + Sentence + optional Concept nodes.
+  # - sentence_features: sentence nodes only.
+  # - section_features: section nodes only.
+  # - document_feature: document node only.
   text_graph_feature: node_features
-  # false: 旧行为，只把层次图里的某个特征张量当作序列输入
-  # true:  新行为，显式使用 edge_index / edge_type / node_type 做图结构编码
+
+  # false: read graph features as a plain feature sequence.
+  # true: use edge_index / edge_type / node_type with the text graph encoder.
   text_use_graph_structure: true
 
-  # -------------------------
-  # 常见切换示例
-  # -------------------------
-  #
-  # A. 切到 BRCA + 层次图文本：
-  # split_file: D:\Tasks\Split_Table\BRCA\split_149.csv
-  # label_file: D:\Tasks\Pathologic_Stage_Label\BRCA_pathologic_stage.csv
-  # text_dir: D:\Tasks\isbi_code\pathology_report_extraction\Output\text_hierarchy_graphs_masked\BRCA
-  # text_mode: hierarchy_graph
-  # text_graph_feature: node_features
-  #
-  # B. 切到 KIRC + 原论文句子文本：
-  # split_file: D:\Tasks\Split_Table\KIRC\split_0.csv
-  # label_file: D:\Tasks\Pathologic_Stage_Label\KIRC_pathologic_stage.csv
-  # text_dir: D:\Tasks\text_extract_features\KIRC_text
-  # text_mode: sentence_pt
-  #
-  # C. 切到 BRCA + 原论文句子文本：
-  # split_file: D:\Tasks\Split_Table\BRCA\split_149.csv
-  # label_file: D:\Tasks\Pathologic_Stage_Label\BRCA_pathologic_stage.csv
-  # text_dir: D:\Tasks\text_extract_features\BRCA_text
-  # text_mode: sentence_pt
-  #
-  # D. 切到 LUSC + 原论文句子文本：
-  # split_file: D:\Tasks\Split_Table\LUSC\split_149.csv
-  # label_file: D:\Tasks\Pathologic_Stage_Label\LUSC_pathologic_stage.csv
-  # text_dir: D:\Tasks\text_extract_features\LUSC_text
-  # text_mode: sentence_pt
-  #
-  # E. 切到 KIRC + concept graph：
-  # split_file: D:\Tasks\Split_Table\KIRC\split_0.csv
-  # label_file: D:\Tasks\Pathologic_Stage_Label\KIRC_pathologic_stage.csv
-  # text_dir: D:\Tasks\isbi_code\pathology_report_extraction\Output\text_concept_graphs_masked\KIRC
-  # text_mode: concept_graph
-  # text_use_graph_structure: true
-  #
-  # 注意：
-  # - image_dir 需要填真实的 WSI 特征 pt 目录，多模态训练才可正常运行
-  # - label_file 现在统一使用与 LUSC 相同格式：case_id, slide_id, label
+  # Common path examples:
+  # BRCA hierarchy graph:
+  #   split_file: "F:\\Tasks\\Split_Table\\BRCA\\split_149.csv"
+  #   label_file: "F:\\Tasks\\Pathologic_Stage_Label\\BRCA_pathologic_stage.csv"
+  #   text_dir: "F:\\Tasks\\isbi_code\\pathology_report_extraction\\Output\\text_hierarchy_graphs_masked\\BRCA"
+  #   text_mode: hierarchy_graph
+  # KIRC sentence-only:
+  #   split_file: "F:\\Tasks\\Split_Table\\KIRC\\split_0.csv"
+  #   label_file: "F:\\Tasks\\Pathologic_Stage_Label\\KIRC_pathologic_stage.csv"
+  #   text_dir: "F:\\Tasks\\Text_Sentence_extract_features\\KIRC_text"
+  #   text_mode: sentence_pt
+  # LUSC sentence-only:
+  #   split_file: "F:\\Tasks\\Split_Table\\LUSC\\split_149.csv"
+  #   label_file: "F:\\Tasks\\Pathologic_Stage_Label\\LUSC_pathologic_stage.csv"
+  #   text_dir: "F:\\Tasks\\Text_Sentence_extract_features\\LUSC_text"
+  #   text_mode: sentence_pt
 
 graph:
   num_nodes_m: 64
@@ -116,27 +68,22 @@ model:
   moe_hard_start_epoch: 10
   classifier_hidden: 256
   classifier_dropout: 0.2
-  # 在 data.text_mode=hierarchy_graph / concept_graph 且 data.text_use_graph_structure=true 时生效
+
+  # Graph-text encoder settings.
   text_graph_layers: 1
   text_graph_dropout: 0.05
-  # true: 使用 parent + next 两类边
-  # false: 过滤掉 next 边；对 concept_graph 会保留非 next 的 concept/ontology 边
   text_graph_use_next_edges: true
-  # 0 表示自动推断：
-  # - hierarchy_graph -> 3 类节点
-  # - concept_graph   -> 4 类节点
   text_graph_num_node_types: 0
-  # 0 表示自动推断：
-  # - hierarchy_graph -> 2 类基础边
-  # - concept_graph   -> 6 类基础边
   text_graph_num_base_relations: 0
-  # dual_text 分支配置
+
+  # Dual-text branch settings.
   sentence_local_layers: 1
   sentence_local_heads: 8
   hier_readout_hidden: 256
   hier_readout_dropout: 0.1
-  # dual_text graph branch: optional section-title semantic embedding.
-  # Keep false for old-checkpoint evaluation; set true for new section-aware experiments.
+
+  # Section titles encode the role/context of each report section. Keep false
+  # for exact legacy runs; use true for controlled hierarchy/ontology ablations.
   use_section_title_embedding: false
   section_title_vocab:
     - Document Body
@@ -154,24 +101,20 @@ model:
     - Summary of Sections
     - Intraoperative Consultation
   text_dual_fusion_dropout: 0.1
-  # dual_text graph branch should be auxiliary rather than replacing raw sentence semantics.
-  # Keep 1.0 to reproduce old unrestricted fusion; use 0.2-0.3 for concept-graph auxiliary runs.
+
+  # Keep 1.0 for old unrestricted fusion. Use 0.2-0.3 when concept graphs
+  # should only act as an auxiliary signal beside the raw sentence branch.
   text_dual_graph_weight_max: 1.0
+  text_dual_fusion_mode: convex  # convex or residual
 
 loss:
   warmup_epochs: 3
   align_decay_to: 0.3
   alpha_txt: 0.5
-  # concept_graph 专用：concept node MMD 权重
-  # 建议先从较保守的值开始
   alpha_concept: 0.2
   beta_node: 0.1
   gamma_topo: 0.1
-  # concept_graph 专用：文本图结构 / 拓扑描述符 MMD 权重
   gamma_text_topology: 0.05
-  # dual_text 专用，可选 gate 正则。
-  # fusion_gate 是 sentence 分支权重，所以 graph 分支权重 = 1 - fusion_gate。
-  # 默认 0.0 表示关闭；concept graph 辅助运行可试 0.01，把 graph 分支目标权重推到 0.1 左右。
   dual_text_gate_reg_weight: 0.0
   dual_text_graph_weight_target: 0.1
   mmd_num_kernels: 3
@@ -193,9 +136,5 @@ train:
   early_stop_min_delta: 0.0001
 
 output:
-  # 建议按实验自行改名，避免覆盖
-  # 例如：
-  # D:\Tasks\isbi_code\experiments\kirc_split0_ncit_concept_graph
-  # D:\Tasks\isbi_code\experiments\brca_split149_sentence_pt
-  exp_dir: F:\Tasks\isbi_code\experiments\kirc_split0_ncit_concept_graph
+  exp_dir: "F:\\Tasks\\isbi_code\\experiments\\kirc_split0_ncit_concept_graph"
   save_best_by: val_avg

@@ -1,7 +1,7 @@
 # ISBI Multimodal Pathology Staging
 
 This repository contains the training and pathology-report processing code used
-for TCGA pathology staging experiments, with current focus on BRCA and KIRC.
+for TCGA pathology staging experiments, with current focus on BRCA, KIRC, and LUSC.
 
 The project has two main tracks:
 
@@ -26,7 +26,7 @@ Ontologies: F:\Tasks\Ontologies\processed
 | `train.py` | Main training implementation and model/eval integration. |
 | `configs/config.yaml` | Hand-edited training config template. |
 | `pathology_report_extraction/` | Report preprocessing, concept extraction, graph building, and manifests. |
-| `tools/` | Experiment orchestration, watchers, and runbooks. |
+| `tools/` | Experiment orchestration, analysis, data helpers, watchers, and runbooks. |
 | `experiment_records/` | Stable, manually curated result summaries. |
 
 ## Supported Text Modes
@@ -93,7 +93,7 @@ F:\Anaconda\envs\pytorch\python.exe F:\Tasks\isbi_code\tools\watch_dual_text_con
 The latest clean rerun summary is generated at:
 
 ```text
-experiment_records\reports\ordered_5split\summary.md
+experiment_records\reports\ordered_splits\summary.md
 ```
 
 Old result records were intentionally removed before the clean ordered rerun.
@@ -108,7 +108,17 @@ More detailed orientation lives in:
 ```text
 docs\project_map.md
 docs\repo_cleanup_plan.md
-tools\dual_text_concept_ablation.md
+docs\runbooks\dual_text_concept_ablation.md
+```
+
+The root directory is kept intentionally small. Historical and auxiliary scripts
+now live under:
+
+```text
+tools\analysis\
+tools\data\
+tools\experiments\
+tools\archive\
 ```
 
 Generated outputs are intentionally ignored:

@@ -1,0 +1,62 @@
+{
+  "created_at": "2026-04-25 15:56:27",
+  "datasets": [
+    "LUSC"
+  ],
+  "methods": [
+    "sentence-ontology",
+    "sentence-hierarchical-graph",
+    "sentence-hierarchical-graph-ontology"
+  ],
+  "new_splits_per_task": 5,
+  "split_offset": "auto",
+  "ontology_variant": "ncit_snomed_mapped",
+  "tasks": [
+    {
+      "dataset": "LUSC",
+      "method": "sentence-ontology",
+      "run_dir": "F:\\Tasks\\isbi_code\\experiments\\LUSC\\sentence-ontology\\runs\\lusc_sentence_ontology_0splits",
+      "config_path": "F:\\Tasks\\isbi_code\\configs\\generated\\ordered_splits\\lusc_sentence_ontology.yaml",
+      "graph_manifest_template": "F:\\Tasks\\isbi_code\\pathology_report_extraction\\Output\\manifests\\ablation\\ncit_snomed_mapped\\lusc_sentence_ontology_graph_manifest_split{split_idx}.csv",
+      "completed_before": [],
+      "requested_split_indices": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    {
+      "dataset": "LUSC",
+      "method": "sentence-hierarchical-graph",
+      "run_dir": "F:\\Tasks\\isbi_code\\experiments\\LUSC\\sentence-hierarchical-graph\\runs\\lusc_sentence_hierarchical_graph_0splits",
+      "config_path": "F:\\Tasks\\isbi_code\\configs\\generated\\ordered_splits\\lusc_sentence_hierarchical_graph.yaml",
+      "graph_manifest_template": "",
+      "completed_before": [],
+      "requested_split_indices": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    {
+      "dataset": "LUSC",
+      "method": "sentence-hierarchical-graph-ontology",
+      "run_dir": "F:\\Tasks\\isbi_code\\experiments\\LUSC\\sentence-hierarchical-graph-ontology\\runs\\lusc_sentence_hierarchical_graph_ontology_0splits",
+      "config_path": "F:\\Tasks\\isbi_code\\configs\\generated\\ordered_splits\\lusc_sentence_hierarchical_graph_ontology.yaml",
+      "graph_manifest_template": "F:\\Tasks\\isbi_code\\pathology_report_extraction\\Output\\manifests\\ablation\\ncit_snomed_mapped\\lusc_concept_graph_manifest_split{split_idx}.csv",
+      "completed_before": [],
+      "requested_split_indices": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ]
+    }
+  ],
+  "skipped": []
+}

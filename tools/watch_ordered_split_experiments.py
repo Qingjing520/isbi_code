@@ -8,11 +8,11 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-PLAN_PATH = REPO_ROOT / "experiment_records" / "reports" / "ordered_5split" / "plan.json"
+PLAN_PATH = REPO_ROOT / "experiment_records" / "reports" / "ordered_splits" / "plan.json"
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Watch ordered 5-split experiment progress.")
+    parser = argparse.ArgumentParser(description="Watch ordered split experiment progress.")
     parser.add_argument("--plan", type=Path, default=PLAN_PATH)
     return parser.parse_args()
 
@@ -66,7 +66,7 @@ def main() -> int:
         print(f"No plan found: {args.plan}")
         return 1
 
-    print(f"Ordered 5-Split Watch | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"Ordered Split Watch | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"Plan: {args.plan}")
     print(f"New splits per task: {plan.get('new_splits_per_task', plan.get('num_splits', ''))}")
     print(f"Split offset: {plan.get('split_offset', '')}")

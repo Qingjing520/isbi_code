@@ -159,17 +159,35 @@ def encode_text_batch(
                     payload=graph_payload,
                     text_graph_use_next_edges=text_graph_use_next_edges,
                 )
+                graph_json_path = str(payload.get("graph_json_path", ""))
+                section_title_ids = None
+                section_node_type_id = _node_type_id_from_payload(graph_payload, "section")
+                if use_section_title_embedding and section_title_to_id and section_node_type_id is not None:
+                    node_type_tensor = graph_payload["node_type"].long()
+                    num_sections = int((node_type_tensor == int(section_node_type_id)).sum().item())
+                    section_title_ids = _section_title_ids_from_graph_json(
+                        graph_json_path=graph_json_path,
+                        num_sections=num_sections,
+                        title_to_id=section_title_to_id,
+                        device=device,
+                    )
+                edge_weight = graph_payload.get("edge_weight")
+                if not isinstance(edge_weight, torch.Tensor):
+                    edge_weight = None
                 updated_nodes, pooled_vec = text_graph_encoder(
                     node_features=x,
                     edge_index=graph_payload["edge_index"].long(),
                     edge_type=graph_payload["edge_type"].long(),
                     node_type=graph_payload["node_type"].long(),
+                    edge_weight=edge_weight,
+                    section_title_ids=section_title_ids,
+                    section_node_type_id=int(section_node_type_id) if section_node_type_id is not None else -1,
                     allowed_forward_relation_ids=allowed_forward_relation_ids,
                 )
                 graph_node_lists.append(updated_nodes)
                 graph_vecs.append(pooled_vec)
                 graph_topology_descs.append(_graph_structure_descriptor(graph_payload))
-                graph_json_paths.append(str(payload.get("graph_json_path", "")))
+                graph_json_paths.append(graph_json_path)
 
             graph_vec = torch.stack(graph_vecs, dim=0)
             fused_vec, gates = dual_text_fusion(sentence_vec, graph_vec)
@@ -262,6 +280,7 @@ def encode_text_batch(
                 edge_index=payload["edge_index"].long(),
                 edge_type=payload["edge_type"].long(),
                 node_type=payload["node_type"].long(),
+                edge_weight=payload.get("edge_weight") if isinstance(payload.get("edge_weight"), torch.Tensor) else None,
                 allowed_forward_relation_ids=allowed_forward_relation_ids,
             )
             node_lists.append(updated_nodes)
@@ -534,6 +553,8 @@ def _build_text_modules(cfg, device: torch.device):
                 num_layers=cfg.model.text_graph_layers,
                 dropout=cfg.model.text_graph_dropout,
                 use_next_edges=cfg.model.text_graph_use_next_edges,
+                use_section_title_embedding=use_section_title_embedding,
+                num_section_title_types=_num_section_title_types_from_cfg(cfg),
             ).to(device)
         else:
             hier_text_branch = HierTextBranch(
@@ -550,6 +571,7 @@ def _build_text_modules(cfg, device: torch.device):
             dim=cfg.model.feat_dim,
             dropout=cfg.model.text_dual_fusion_dropout,
             graph_weight_max=float(getattr(cfg.model, "text_dual_graph_weight_max", 1.0)),
+            fusion_mode=str(getattr(cfg.model, "text_dual_fusion_mode", "convex")),
         ).to(device)
     elif _graph_mode_uses_structure(text_mode) and text_use_graph_structure:
         text_graph_encoder = TextHierarchyGraphEncoder(
@@ -559,6 +581,8 @@ def _build_text_modules(cfg, device: torch.device):
             num_layers=cfg.model.text_graph_layers,
             dropout=cfg.model.text_graph_dropout,
             use_next_edges=cfg.model.text_graph_use_next_edges,
+            use_section_title_embedding=use_section_title_embedding,
+            num_section_title_types=_num_section_title_types_from_cfg(cfg),
         ).to(device)
     else:
         pool_txt = AttentionPooling(

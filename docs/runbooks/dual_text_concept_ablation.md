@@ -1,17 +1,17 @@
 # Dual Text Concept-Graph Ablation Runbook
 
-This folder contains the code-side entry points for the ontology ablation experiments.
-Generated configs and experiment outputs are intentionally not source files.
+This runbook documents the ontology ablation experiments. Generated configs and
+experiment outputs are intentionally not source files.
 
 ## Scripts
 
 - `pathology_report_extraction/build_ontology_ablation_bundles.py`
-  Builds the four ontology resources used by the ablation:
-  `ncit_only`, `ncit_do`, `ncit_snomed_mapped`, and `full_multi_ontology`.
+  Builds four ontology resources: `ncit_only`, `ncit_do`,
+  `ncit_snomed_mapped`, and `full_multi_ontology`.
 
 - `tools/run_dual_text_concept_ablation.py`
-  Orchestrates the full pipeline:
-  concept annotations, concept graphs, manifests, 3-split training, and result aggregation.
+  Orchestrates concept annotations, concept graphs, manifests, training, and
+  result aggregation.
 
 - `tools/watch_dual_text_concept_ablation.py`
   Prints live progress for the background ablation run.
@@ -61,8 +61,8 @@ F:\Anaconda\envs\pytorch\python.exe tools\run_dual_text_concept_ablation.py --sk
 
 ## Notes
 
-- `configs/generated/` is ignored by Git because these YAML files are recreated by the orchestration script.
-- `experiments/` and `pathology_report_extraction/Output/` are also ignored and should remain runtime artifacts.
+- `configs/generated/` is ignored by Git because orchestration recreates these YAML files.
+- `experiments/` and `pathology_report_extraction/Output/` are runtime artifacts.
 - Commit source changes separately from final result summaries.
 
 ## Completed 3-Split Result
@@ -78,4 +78,4 @@ Practical default for the next round:
 - KIRC: prefer `ncit_do`; it was the best AUC variant and nearly tied the old raw-text dual baseline.
 - BRCA: prefer `ncit_snomed_mapped` only as the concept-graph candidate; it was best among ontology variants but still below the old raw-text dual baseline.
 - Avoid promoting `full_multi_ontology` as the default until BRCA concept noise and fusion behavior are audited.
-- Keep concept graph auxiliary: generated ablation configs cap `text_dual_graph_weight_max` at `0.2` and use `dual_text_graph_weight_target: 0.1`, so the raw sentence branch remains the primary semantic carrier. New auxiliary runs write to experiment directories with the `auxgw20` tag to avoid overwriting the earlier unrestricted-fusion results.
+- Keep concept graph auxiliary: generated ablation configs cap `text_dual_graph_weight_max` at `0.2` and use `dual_text_graph_weight_target: 0.1`, so the raw sentence branch remains the primary semantic carrier.

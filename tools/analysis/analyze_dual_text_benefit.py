@@ -4,9 +4,14 @@ import argparse
 import csv
 import json
 import statistics
+import sys
 from collections import Counter
 from pathlib import Path
 from typing import Any
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from configs.config import get_config
 from train import load_and_eval
@@ -14,22 +19,22 @@ from train import load_and_eval
 
 DATASET_DEFAULTS = {
     "BRCA": {
-        "split_dir": r"D:\Tasks\Split_Table\BRCA",
-        "label_file": r"D:\Tasks\Pathologic_Stage_Label\BRCA_pathologic_stage.csv",
-        "image_dir": r"D:\Tasks\WSI_extract_features\BRCA_WSI_extract_features",
-        "sentence_text_dir": r"D:\Tasks\Text_Sentence_extract_features\BRCA_text",
-        "graph_text_dir": r"D:\Tasks\isbi_code\pathology_report_extraction\Output\text_hierarchy_graphs_masked\BRCA",
-        "sentence_exp_root": r"D:\Tasks\isbi_code\experiments\brca_text_mode_comparison_5splits_node_features\sentence_pt",
-        "dual_exp_root": r"D:\Tasks\isbi_code\experiments\brca_dual_text_readout_v2_gate001_10splits",
+        "split_dir": r"F:\Tasks\Split_Table\BRCA",
+        "label_file": r"F:\Tasks\Pathologic_Stage_Label\BRCA_pathologic_stage.csv",
+        "image_dir": r"F:\Tasks\WSI_extract_features\BRCA_WSI_extract_features",
+        "sentence_text_dir": r"F:\Tasks\Text_Sentence_extract_features\BRCA_text",
+        "graph_text_dir": r"F:\Tasks\isbi_code\pathology_report_extraction\Output\text_hierarchy_graphs_masked\BRCA",
+        "sentence_exp_root": r"F:\Tasks\isbi_code\experiments\brca_text_mode_comparison_5splits_node_features\sentence_pt",
+        "dual_exp_root": r"F:\Tasks\isbi_code\experiments\brca_dual_text_readout_v2_gate001_10splits",
     },
     "KIRC": {
-        "split_dir": r"D:\Tasks\Split_Table\KIRC",
-        "label_file": r"D:\Tasks\Pathologic_Stage_Label\KIRC_pathologic_stage.csv",
-        "image_dir": r"D:\Tasks\WSI_extract_features\KIRC_WSI_extract_features",
-        "sentence_text_dir": r"D:\Tasks\Text_Sentence_extract_features\KIRC_text",
-        "graph_text_dir": r"D:\Tasks\isbi_code\pathology_report_extraction\Output\text_hierarchy_graphs_masked\KIRC",
-        "sentence_exp_root": r"D:\Tasks\isbi_code\experiments\kirc_text_mode_comparison_20splits_node_features\sentence_pt",
-        "dual_exp_root": r"D:\Tasks\isbi_code\experiments\kirc_dual_text_readout_v2_gate001_10splits",
+        "split_dir": r"F:\Tasks\Split_Table\KIRC",
+        "label_file": r"F:\Tasks\Pathologic_Stage_Label\KIRC_pathologic_stage.csv",
+        "image_dir": r"F:\Tasks\WSI_extract_features\KIRC_WSI_extract_features",
+        "sentence_text_dir": r"F:\Tasks\Text_Sentence_extract_features\KIRC_text",
+        "graph_text_dir": r"F:\Tasks\isbi_code\pathology_report_extraction\Output\text_hierarchy_graphs_masked\KIRC",
+        "sentence_exp_root": r"F:\Tasks\isbi_code\experiments\kirc_text_mode_comparison_20splits_node_features\sentence_pt",
+        "dual_exp_root": r"F:\Tasks\isbi_code\experiments\kirc_dual_text_readout_v2_gate001_10splits",
     },
 }
 
@@ -170,7 +175,7 @@ def main() -> None:
         description="Compare sentence_pt and dual_text sample-level predictions to find hierarchy-benefited reports."
     )
     parser.add_argument("--dataset", required=True, choices=sorted(DATASET_DEFAULTS))
-    parser.add_argument("--config", default=r"D:\Tasks\isbi_code\configs\config.yaml")
+    parser.add_argument("--config", default=r"F:\Tasks\isbi_code\configs\config.yaml")
     parser.add_argument("--output_dir", default="")
     parser.add_argument("--num_splits", type=int, default=10)
     parser.add_argument("--split_offset", type=int, default=0)

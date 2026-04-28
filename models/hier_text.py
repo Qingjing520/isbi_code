@@ -197,13 +197,28 @@ class HierarchicalReadout(nn.Module):
 
 
 class DualTextFusion(nn.Module):
-    """Fuse sentence baseline text vector and hierarchy-graph text vector with a gate."""
+    """Fuse sentence baseline text vector and graph text vector with a bounded gate.
 
-    def __init__(self, dim: int = 512, dropout: float = 0.1, graph_weight_max: float = 1.0):
+    ``convex`` keeps the historical weighted-average behavior. ``residual`` keeps
+    the sentence branch as the trunk and injects only a bounded graph residual:
+    sentence + lambda * gate * graph.
+    """
+
+    def __init__(
+        self,
+        dim: int = 512,
+        dropout: float = 0.1,
+        graph_weight_max: float = 1.0,
+        fusion_mode: str = "convex",
+    ):
         super().__init__()
         if not 0.0 <= graph_weight_max <= 1.0:
             raise ValueError("graph_weight_max must be in [0, 1].")
         self.graph_weight_max = float(graph_weight_max)
+        fusion_mode = str(fusion_mode or "convex").lower()
+        if fusion_mode not in {"convex", "residual"}:
+            raise ValueError("fusion_mode must be 'convex' or 'residual'.")
+        self.fusion_mode = fusion_mode
         self.gate = nn.Sequential(
             nn.Linear(dim * 2, dim),
             nn.GELU(),
@@ -213,12 +228,13 @@ class DualTextFusion(nn.Module):
         self.out_norm = nn.LayerNorm(dim)
 
     def forward(self, sentence_vec: torch.Tensor, graph_vec: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        sentence_gate = torch.sigmoid(self.gate(torch.cat([sentence_vec, graph_vec], dim=-1)))
-        graph_weight = 1.0 - sentence_gate
-        if self.graph_weight_max < 1.0:
-            graph_weight = graph_weight * self.graph_weight_max
-            sentence_gate = 1.0 - graph_weight
-        fused = sentence_gate * sentence_vec + graph_weight * graph_vec
+        raw_graph_gate = torch.sigmoid(self.gate(torch.cat([sentence_vec, graph_vec], dim=-1)))
+        graph_weight = raw_graph_gate * self.graph_weight_max
+        sentence_gate = 1.0 - graph_weight
+        if self.fusion_mode == "residual":
+            fused = sentence_vec + graph_weight * graph_vec
+        else:
+            fused = sentence_gate * sentence_vec + graph_weight * graph_vec
         return self.out_norm(fused), sentence_gate
 
 

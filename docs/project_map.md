@@ -36,29 +36,36 @@ This is the current high-level map of `F:\Tasks\isbi_code`.
 
 ## Pathology Report Pipeline
 
-- `pathology_report_extraction/preprocess_pathology_reports.py`
-  Report text preprocessing.
+- `pathology_report_extraction/run_pipeline.py`
+  Backward-compatible one-click entry point. The implementation lives in
+  `pathology_report_extraction/pipeline/run_pipeline.py`.
 
-- `pathology_report_extraction/export_sentence_views.py`
-  Section/sentence export.
+- `pathology_report_extraction/pipeline/`
+  Report preprocessing, section/sentence export, CONCH sentence embedding, and
+  pipeline orchestration.
 
-- `pathology_report_extraction/encode_sentence_exports_conch.py`
-  Sentence embedding export.
+- `pathology_report_extraction/ontology/`
+  NCIt/DO/SNOMED/UMLS resource building, ontology concept extraction,
+  ablation-bundle generation, and concept audits.
 
-- `pathology_report_extraction/extract_ontology_concepts.py`
-  Ontology concept matching and true-path expansion.
+- `pathology_report_extraction/graphs/`
+  Document/Section/Sentence hierarchy graphs, sentence-ontology auxiliary
+  graphs, and training manifest generation.
 
-- `pathology_report_extraction/build_text_hierarchy_graphs.py`
-  Document/Section/Sentence/Concept graph construction.
+- `pathology_report_extraction/labels/`
+  Clinical XML label extraction and split-aligned label expansion.
 
-- `pathology_report_extraction/prepare_text_graph_manifest.py`
-  Slide-level manifest generation for training.
+- `pathology_report_extraction/visualization/`
+  Unified hierarchy-graph visualization entry point for single-sample and
+  two-dataset comparison figures.
 
-- `pathology_report_extraction/build_project_ontology_resources.py`
-  NCIt/DO/SNOMED/UMLS resource builder.
+- `pathology_report_extraction/common/`
+  Shared default paths, output subdirectory names, ontology/CONCH roots, PDF,
+  OCR, JSON, and text-cleaning helpers.
 
-- `pathology_report_extraction/build_ontology_ablation_bundles.py`
-  Four-way ontology ablation bundle builder.
+Root-level pathology scripts are thin compatibility wrappers so old commands
+and running experiment orchestrators keep working while new code stays grouped
+by purpose.
 
 ## Experiment Tools
 
@@ -68,23 +75,27 @@ This is the current high-level map of `F:\Tasks\isbi_code`.
 - `tools/watch_dual_text_concept_ablation.py`
   Live status view for that ablation.
 
-- `tools/dual_text_concept_ablation.md`
+- `docs/runbooks/dual_text_concept_ablation.md`
   Runbook.
 
-- `tools/make_splits.py`
-  Split helper.
+- `tools/data/make_splits.py`
+  General split generator. It supports single feature directories and
+  BRCA/KIRC/LUSC standard roots, with optional label-stratified splits.
+
+- `tools/build_ordered_method_comparison.py`
+  Builds the paper-facing ordered method comparison table from split records
+  and current run folders.
 
 ## Historical Scripts
 
-These are useful but should eventually move under `tools/analysis/`,
-`tools/experiments/`, or `tools/archive/`.
+These were moved out of the repository root to keep the main training surface
+small.
 
-- `analyze_dual_text_benefit.py`
-- `analyze_dual_text_samples.py`
-- `auto_train_next.py`
-- `compare_brca_text_modes.py`
-- `generate_split_tables.py`
-- `run_dual_text_splits.py`
+- `tools/analysis/analyze_dual_text_benefit.py`
+- `tools/analysis/analyze_dual_text_samples.py`
+- `tools/archive/auto_train_next.py`
+- `tools/experiments/compare_text_modes.py`
+- `tools/experiments/run_dual_text_splits.py`
 
 ## Output And Records
 
@@ -100,6 +111,6 @@ These are useful but should eventually move under `tools/analysis/`,
 
 ## Known Cleanup Items
 
-- Root `README.md` has mojibake and should be replaced.
-- Some pathology scripts contain UTF-8 BOM; harmless to Python execution, but annoying for static parsing.
-- `test.py` is an untracked scratch file and should be deleted only if confirmed.
+- Some archived historical scripts still contain old hard-coded defaults; prefer
+  the current `run_main_splits.py`, ordered runners, and `tools/data/make_splits.py`
+  for new work.
