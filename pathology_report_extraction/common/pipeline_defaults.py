@@ -21,6 +21,13 @@ DEFAULT_FILTER_MODE = "masked"
 DEFAULT_INPUT_DIR = TASKS_ROOT / "Pathology Report"
 DEFAULT_OUTPUT_ROOT = PIPELINE_DIR / "Output"
 DEFAULT_LABEL_CSV = TASKS_ROOT / "pathologic_stage.csv"
+DEFAULT_HIERARCHY_GRAPH_ROOT = TASKS_ROOT / "Pathology_Report_Hierarchy_Graphs"
+HIERARCHY_GRAPH_TYPE_DIRS = {
+    "basic": "basic_hierarchy",
+    "ontology_concept": "ontology_concept_hierarchy",
+    "stage_keyword_word": "stage_keyword_word_hierarchy",
+    "stage_keyword_word_ontology": "stage_keyword_word_ontology_hierarchy",
+}
 
 DEFAULT_ONTOLOGY_ROOT = TASKS_ROOT / "Ontologies"
 DEFAULT_ONTOLOGY_RAW_ROOT = DEFAULT_ONTOLOGY_ROOT / "raw"

@@ -32,6 +32,7 @@ VARIANTS = {
     "ncit_snomed_mapped": ONTOLOGY_ABLATION_DIR / "ncit_snomed_mapped_ontology.json",
     "full_multi_ontology": ONTOLOGY_ABLATION_DIR / "full_multi_ontology_ontology.json",
 }
+DEFAULT_VARIANTS = ["ncit_do"]
 
 DATASETS = {
     "KIRC": {
@@ -112,7 +113,7 @@ def summary_success(path: Path, success_key: str, total_key: str, allow_skipped:
     return success_count == total_count
 
 
-def build_ontology_bundles() -> None:
+def build_ontology_bundles(variants: list[str]) -> None:
     run_command(
         "build_ontology_ablation_bundles",
         [
@@ -122,6 +123,8 @@ def build_ontology_bundles() -> None:
             str(ONTOLOGY_PROCESSED_DIR),
             "--output_dir",
             str(ONTOLOGY_ABLATION_DIR),
+            "--variants",
+            *variants,
         ],
         LOG_ROOT / "build_ontology_ablation_bundles.log",
     )
@@ -400,7 +403,13 @@ def aggregate_results(datasets: list[str], variants: list[str]) -> None:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run dual_text + concept graph ontology ablations.")
     parser.add_argument("--datasets", nargs="+", default=["KIRC", "BRCA"], choices=sorted(DATASETS))
-    parser.add_argument("--variants", nargs="+", default=list(VARIANTS), choices=sorted(VARIANTS))
+    parser.add_argument(
+        "--variants",
+        nargs="+",
+        default=DEFAULT_VARIANTS,
+        choices=sorted(VARIANTS),
+        help="Default is ncit_do only. SNOMED/UMLS variants are retained as explicit legacy ablations.",
+    )
     parser.add_argument("--num_splits", type=int, default=3)
     parser.add_argument("--force_preprocess", action="store_true")
     parser.add_argument("--force_train", action="store_true")
@@ -412,7 +421,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     ensure_dir(LOG_ROOT)
-    build_ontology_bundles()
+    build_ontology_bundles(args.variants)
 
     for dataset in args.datasets:
         for variant in args.variants:

@@ -2,13 +2,13 @@ from __future__ import annotations
 
 """Build project ontology resources for concept extraction and concept graphs.
 
-This script now supports a multi-ontology oncology bundle with the following
-roles:
+The current default builds the compact NCIt+DO ontology mainline:
 
 - NCIt: core canonical oncology concepts for normalization
-- SNOMED CT: broader lexical coverage for mention finding
-- UMLS: alignment layer across terminologies via shared CUIs
 - DO: disease hierarchy supplementation
+
+SNOMED CT and UMLS remain available for explicit legacy/recall ablations via
+`--include_snomed` and `--include_umls`.
 
 The emitted bundle remains compatible with `extract_ontology_concepts.py`.
 """
@@ -1122,8 +1122,21 @@ def build_oncology_multi_ontology_bundle(
                 )
             bundle_concepts[snomed_id] = record
 
+    has_snomed = snomed_resource is not None
+    strategy_roles = {
+        "NCIt": "core_normalization",
+        "DO": "disease_hierarchy",
+    }
+    if has_snomed:
+        strategy_roles.update(
+            {
+                "SNOMEDCT": "mention_expansion",
+                "UMLS": "cross_terminology_alignment",
+            }
+        )
+
     bundle = {
-        "ontology_name": "Oncology Multi Ontology Bundle",
+        "ontology_name": "Oncology NCIt + DO Bundle" if not has_snomed else "Oncology Multi Ontology Bundle",
         "ontology_version": {
             "ncit": ncit_resource.get("ontology_version"),
             "do": do_resource.get("ontology_version") if do_resource is not None else None,
@@ -1135,15 +1148,10 @@ def build_oncology_multi_ontology_bundle(
             "snomed_ct": snomed_resource.get("ontology_name") if snomed_resource is not None else None,
         },
         "bundle_strategy": {
-            "canonical_priority": ["NCIt", "DO", "SNOMEDCT"],
-            "lexical_coverage_sources": ["SNOMEDCT", "NCIt", "DO"],
-            "match_resolution_priority": ["NCIt", "DO", "SNOMEDCT"],
-            "roles": {
-                "NCIt": "core_normalization",
-                "SNOMEDCT": "mention_expansion",
-                "UMLS": "cross_terminology_alignment",
-                "DO": "disease_hierarchy",
-            },
+            "canonical_priority": ["NCIt", "DO", *(["SNOMEDCT"] if has_snomed else [])],
+            "lexical_coverage_sources": ["NCIt", "DO", *(["SNOMEDCT"] if has_snomed else [])],
+            "match_resolution_priority": ["NCIt", "DO", *(["SNOMEDCT"] if has_snomed else [])],
+            "roles": strategy_roles,
             "merged_snomed_concepts": merged_snomed_count,
             "standalone_snomed_concepts": standalone_snomed_count,
             "do_hierarchy_nodes": len(do_keep_ids),
@@ -1155,7 +1163,7 @@ def build_oncology_multi_ontology_bundle(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Convert NCIt / DO / SNOMED CT / UMLS ontology downloads into project JSON resources."
+        description="Convert ontology downloads into project JSON resources. Defaults to the compact NCIt+DO mainline."
     )
     parser.add_argument("--ontology_root", type=Path, default=DEFAULT_ONTOLOGY_ROOT)
     parser.add_argument("--raw_root", type=Path, default=None)
@@ -1166,8 +1174,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--umls_mrconso", type=Path, default=None)
     parser.add_argument("--skip_ncit", action="store_true")
     parser.add_argument("--skip_do", action="store_true")
-    parser.add_argument("--skip_snomed", action="store_true")
-    parser.add_argument("--skip_umls", action="store_true")
+    parser.add_argument("--include_snomed", action="store_true", help="Explicitly include legacy SNOMED CT resources.")
+    parser.add_argument("--include_umls", action="store_true", help="Explicitly include legacy UMLS alignment.")
+    parser.add_argument("--skip_snomed", action="store_true", help="Legacy no-op unless --include_snomed is also set.")
+    parser.add_argument("--skip_umls", action="store_true", help="Legacy no-op unless --include_umls is also set.")
     parser.add_argument("--skip_bundle", action="store_true")
     return parser.parse_args()
 
@@ -1178,13 +1188,23 @@ def main() -> None:
     raw_root = Path(args.raw_root) if args.raw_root is not None else ontology_root / "raw"
     output_dir = Path(args.output_dir) if args.output_dir is not None else ontology_root / "processed"
     ensure_dir(output_dir)
+    use_umls = bool(args.include_umls and not args.skip_umls)
+    use_snomed = bool(args.include_snomed and not args.skip_snomed)
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 
     ncit_zip = Path(args.ncit_zip) if args.ncit_zip is not None else _discover_ncit_zip(raw_root)
     do_owl = Path(args.do_owl) if args.do_owl is not None else _discover_do_owl(raw_root)
-    snomed_root = Path(args.snomed_root) if args.snomed_root is not None else _discover_snomed_root(raw_root)
-    umls_mrconso = Path(args.umls_mrconso) if args.umls_mrconso is not None else _discover_umls_mrconso(raw_root)
+    snomed_root = (
+        Path(args.snomed_root)
+        if args.snomed_root is not None
+        else (_discover_snomed_root(raw_root) if use_snomed else None)
+    )
+    umls_mrconso = (
+        Path(args.umls_mrconso)
+        if args.umls_mrconso is not None
+        else (_discover_umls_mrconso(raw_root) if use_umls else None)
+    )
 
     ncit_resource = None
     ncit_pathology_subset = None
@@ -1216,14 +1236,14 @@ def main() -> None:
         LOGGER.info("Wrote DO resource with %s concepts", do_resource["concept_count"])
 
     relevant_cuis = collect_relevant_umls_cuis(ncit_pathology_subset, do_resource)
-    if not args.skip_umls:
-        if not umls_mrconso.exists():
+    if use_umls:
+        if umls_mrconso is None or not umls_mrconso.exists():
             raise FileNotFoundError(f"UMLS MRCONSO not found: {umls_mrconso}")
         umls_alignment = parse_targeted_umls_alignment(umls_mrconso, relevant_cuis)
         write_json(output_dir / "umls_targeted_alignment.json", umls_alignment)
 
-    if not args.skip_snomed:
-        if not snomed_root.exists():
+    if use_snomed:
+        if snomed_root is None or not snomed_root.exists():
             raise FileNotFoundError(f"SNOMED CT root not found: {snomed_root}")
         snomed_resource = build_snomed_resource(
             snomed_root=snomed_root,
@@ -1255,13 +1275,16 @@ def main() -> None:
         "output_dir": str(output_dir),
         "ncit_zip": str(ncit_zip) if not args.skip_ncit else None,
         "do_owl": str(do_owl) if not args.skip_do else None,
-        "snomed_root": str(snomed_root) if not args.skip_snomed else None,
-        "umls_mrconso": str(umls_mrconso) if not args.skip_umls else None,
+        "snomed_root": str(snomed_root) if use_snomed and snomed_root is not None else None,
+        "umls_mrconso": str(umls_mrconso) if use_umls and umls_mrconso is not None else None,
+        "ontology_mainline": "ncit_do",
+        "legacy_snomed_enabled": use_snomed,
+        "legacy_umls_enabled": use_umls,
         "outputs": {
             "ncit_project_ontology_json": str(output_dir / "ncit_project_ontology.json") if ncit_resource is not None else None,
             "ncit_pathology_subset_ontology_json": str(output_dir / "ncit_pathology_subset_ontology.json") if ncit_pathology_subset is not None else None,
             "do_project_ontology_json": str(output_dir / "do_project_ontology.json") if do_resource is not None else None,
-            "umls_targeted_alignment_json": str(output_dir / "umls_targeted_alignment.json") if not args.skip_umls else None,
+            "umls_targeted_alignment_json": str(output_dir / "umls_targeted_alignment.json") if use_umls else None,
             "snomed_pathology_subset_ontology_json": str(output_dir / "snomed_pathology_subset_ontology.json") if snomed_resource is not None else None,
             "oncology_multi_ontology_bundle_json": str(output_dir / "oncology_multi_ontology_bundle.json") if bundle_resource is not None else None,
             "ontology_crosswalk_summary_json": str(output_dir / "ontology_crosswalk_summary.json"),

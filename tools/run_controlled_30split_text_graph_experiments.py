@@ -58,10 +58,19 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--target_splits", type=int, default=30)
     parser.add_argument("--ontology_variant", type=str, default="ncit_do")
+    parser.add_argument(
+        "--hierarchy_ontology_graph_type",
+        type=str,
+        default=ordered.HIERARCHY_GRAPH_TYPE_DIRS["ontology_concept"],
+        choices=[
+            ordered.HIERARCHY_GRAPH_TYPE_DIRS["ontology_concept"],
+            ordered.HIERARCHY_GRAPH_TYPE_DIRS["stage_keyword_word_ontology"],
+        ],
+    )
     parser.add_argument("--train_num_workers", type=int, default=0)
-    parser.add_argument("--hierarchy_graph_weight_max", type=float, default=0.2)
-    parser.add_argument("--ontology_graph_weight_max", type=float, default=0.2)
-    parser.add_argument("--graph_weight_target", type=float, default=0.1)
+    parser.add_argument("--hierarchy_graph_weight_max", type=float, default=0.1)
+    parser.add_argument("--ontology_graph_weight_max", type=float, default=0.1)
+    parser.add_argument("--graph_weight_target", type=float, default=0.0)
     parser.add_argument("--fusion_mode", type=str, default="residual", choices=["convex", "residual"])
     parser.add_argument("--no_section_title_embedding", action="store_true")
     parser.add_argument("--force_train", action="store_true")
@@ -85,7 +94,14 @@ def completed_split_indices_strict(run_dir: Path) -> list[int]:
     return sorted(set(indices))
 
 
-def build_manifest_template(dataset: str, method: str, variant: str, split_indices: list[int], dry_run: bool) -> str:
+def build_manifest_template(
+    dataset: str,
+    method: str,
+    variant: str,
+    split_indices: list[int],
+    dry_run: bool,
+    hierarchy_ontology_graph_type: str,
+) -> str:
     if method == "sentence-ontology":
         graph_dir = ordered.sentence_ontology_graph_dir(dataset, variant)
         if not dry_run:
@@ -108,24 +124,26 @@ def build_manifest_template(dataset: str, method: str, variant: str, split_indic
         )
 
     if method == "sentence-hierarchical-graph-ontology":
-        graph_dir = ordered.concept_graph_dir(dataset, variant)
+        graph_dir = ordered.concept_graph_dir(dataset, variant, graph_type=hierarchy_ontology_graph_type)
         if not dry_run:
             ordered.ensure_graph_manifests(
                 dataset=dataset,
                 indices=split_indices,
                 graph_dir=graph_dir,
-                manifest_path_fn=lambda dataset_name, split_idx, v=variant: ordered.concept_manifest_path(
+                manifest_path_fn=lambda dataset_name, split_idx, v=variant, graph_type=hierarchy_ontology_graph_type: ordered.concept_manifest_path(
                     dataset_name,
                     v,
                     split_idx,
+                    graph_type=graph_type,
                 ),
             )
         return str(
-            ordered.OUTPUT_ROOT
-            / "manifests"
-            / "ablation"
-            / variant
-            / f"{dataset.lower()}_concept_graph_manifest_split{{split_idx}}.csv"
+            ordered.concept_manifest_path(
+                dataset,
+                variant,
+                split_idx="{split_idx}",  # type: ignore[arg-type]
+                graph_type=hierarchy_ontology_graph_type,
+            )
         )
 
     return ""
@@ -147,6 +165,7 @@ def make_config(task: RequestedTask, run_dir: Path, manifest_template: str, args
         variant=args.ontology_variant,
         exp_dir=run_dir,
         graph_manifest_template=manifest_template,
+        hierarchy_ontology_graph_type=args.hierarchy_ontology_graph_type,
         hierarchy_graph_weight_max=args.hierarchy_graph_weight_max,
         ontology_graph_weight_max=args.ontology_graph_weight_max,
         graph_weight_target=args.graph_weight_target,
@@ -233,6 +252,7 @@ def main() -> int:
         "created_at": now(),
         "target_splits": int(args.target_splits),
         "ontology_variant": args.ontology_variant,
+        "hierarchy_ontology_graph_type": args.hierarchy_ontology_graph_type,
         "fusion_mode": args.fusion_mode,
         "use_section_title_embedding": not bool(args.no_section_title_embedding),
         "hierarchy_graph_weight_max": float(args.hierarchy_graph_weight_max),
@@ -254,7 +274,13 @@ def main() -> int:
             print(f"[{now()}] SKIP {task.dataset} / {task.method}: already has {args.target_splits} splits.", flush=True)
             continue
 
-        reason = ordered.unavailable_reason(task.dataset, task.method, args.ontology_variant, split_indices)
+        reason = ordered.unavailable_reason(
+            task.dataset,
+            task.method,
+            args.ontology_variant,
+            split_indices,
+            hierarchy_ontology_graph_type=args.hierarchy_ontology_graph_type,
+        )
         if reason:
             raise RuntimeError(f"Cannot run {task.dataset} / {task.method}: {reason}")
 
@@ -265,6 +291,7 @@ def main() -> int:
             variant=args.ontology_variant,
             split_indices=split_indices,
             dry_run=False,
+            hierarchy_ontology_graph_type=args.hierarchy_ontology_graph_type,
         )
         config_path = make_config(task, run_dir, manifest_template, args)
         run_task(task, run_dir, config_path, split_indices, manifest_template, args)

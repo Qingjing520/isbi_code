@@ -24,6 +24,8 @@ from pathology_report_extraction.ontology.build_project_ontology_resources impor
 
 DEFAULT_PROCESSED_DIR = DEFAULT_ONTOLOGY_PROCESSED_DIR
 DEFAULT_OUTPUT_DIR = DEFAULT_ONTOLOGY_ABLATION_DIR
+DEFAULT_VARIANTS = ("ncit_do",)
+ALL_VARIANTS = ("ncit_only", "ncit_do", "ncit_snomed_mapped", "full_multi_ontology")
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -107,57 +109,79 @@ def build_ncit_snomed_mapped_bundle(
     return finalize_resource(bundle)
 
 
-def build_ablation_bundles(processed_dir: Path, output_dir: Path) -> dict[str, Any]:
+def build_ablation_bundles(
+    processed_dir: Path,
+    output_dir: Path,
+    variant_names: list[str] | tuple[str, ...] | None = None,
+) -> dict[str, Any]:
     processed_dir = Path(processed_dir)
     output_dir = Path(output_dir)
+    requested_variants = list(variant_names or DEFAULT_VARIANTS)
+    unknown_variants = sorted(set(requested_variants) - set(ALL_VARIANTS))
+    if unknown_variants:
+        raise ValueError(f"Unknown ontology variants: {', '.join(unknown_variants)}")
 
     ncit = load_json(processed_dir / "ncit_pathology_subset_ontology.json")
     do = load_json(processed_dir / "do_project_ontology.json")
-    snomed = load_json(processed_dir / "snomed_pathology_subset_ontology.json")
-    crosswalk = load_json(processed_dir / "ontology_crosswalk_summary.json")
 
-    # Ensure the NCIt/DO crosswalk is populated even if an older summary file is supplied.
+    # Current default uses NCIt for task-level normalization and DO for disease hierarchy.
     base_crosswalk = build_crosswalks(ncit_resource=ncit, do_resource=do)
-    for key, values in crosswalk.items():
-        if isinstance(values, dict):
-            base_crosswalk.setdefault(key, {})
-            base_crosswalk[key].update(values)
+    needs_legacy_alignment = any(
+        variant in {"ncit_snomed_mapped", "full_multi_ontology"} for variant in requested_variants
+    )
+    if needs_legacy_alignment:
+        crosswalk_path = processed_dir / "ontology_crosswalk_summary.json"
+        if crosswalk_path.exists():
+            legacy_crosswalk = load_json(crosswalk_path)
+            for key, values in legacy_crosswalk.items():
+                if isinstance(values, dict):
+                    base_crosswalk.setdefault(key, {})
+                    base_crosswalk[key].update(values)
     crosswalk = base_crosswalk
 
-    variants = {
-        "ncit_only": _normalise_resource_metadata(
+    variants: dict[str, dict[str, Any]] = {}
+    if "ncit_only" in requested_variants:
+        variants["ncit_only"] = _normalise_resource_metadata(
             ncit,
             "NCIt-only Pathology Subset",
             {"type": "ncit_only", "match_sources": ["NCIt"]},
-        ),
-        "ncit_do": build_oncology_multi_ontology_bundle(
+        )
+
+    if "ncit_do" in requested_variants:
+        variants["ncit_do"] = build_oncology_multi_ontology_bundle(
             ncit_resource=ncit,
             do_resource=do,
             snomed_resource=None,
             crosswalk=crosswalk,
-        ),
-        "ncit_snomed_mapped": build_ncit_snomed_mapped_bundle(
+        )
+        variants["ncit_do"]["ontology_name"] = "NCIt + DO Bundle"
+        variants["ncit_do"]["ablation_strategy"] = {
+            "type": "ncit_core_with_do_hierarchy",
+            "match_sources": ["NCIt"],
+            "hierarchy_sources": ["NCIt", "DO"],
+        }
+
+    if "ncit_snomed_mapped" in requested_variants:
+        snomed = load_json(processed_dir / "snomed_pathology_subset_ontology.json")
+        variants["ncit_snomed_mapped"] = build_ncit_snomed_mapped_bundle(
             ncit_resource=ncit,
             snomed_resource=snomed,
             crosswalk=crosswalk,
-        ),
-        "full_multi_ontology": load_json(processed_dir / "oncology_multi_ontology_bundle.json"),
-    }
-    variants["ncit_do"]["ontology_name"] = "NCIt + DO Bundle"
-    variants["ncit_do"]["ablation_strategy"] = {
-        "type": "ncit_core_with_do_hierarchy",
-        "match_sources": ["NCIt"],
-        "hierarchy_sources": ["NCIt", "DO"],
-    }
-    variants["full_multi_ontology"]["ablation_strategy"] = {
-        "type": "ncit_do_snomed_umls_full",
-        "match_sources": ["NCIt", "SNOMEDCT"],
-        "hierarchy_sources": ["NCIt", "DO", "SNOMEDCT"],
-    }
+        )
+
+    if "full_multi_ontology" in requested_variants:
+        variants["full_multi_ontology"] = load_json(processed_dir / "oncology_multi_ontology_bundle.json")
+        variants["full_multi_ontology"]["ablation_strategy"] = {
+            "type": "ncit_do_snomed_umls_full_legacy",
+            "match_sources": ["NCIt", "SNOMEDCT"],
+            "hierarchy_sources": ["NCIt", "DO", "SNOMEDCT"],
+        }
 
     summary: dict[str, Any] = {
         "processed_dir": str(processed_dir),
         "output_dir": str(output_dir),
+        "requested_variants": requested_variants,
+        "default_variants": list(DEFAULT_VARIANTS),
         "variants": {},
     }
     for variant_name, resource in variants.items():
@@ -174,15 +198,27 @@ def build_ablation_bundles(processed_dir: Path, output_dir: Path) -> dict[str, A
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Build ontology ablation bundles for NCIt/DO/SNOMED experiments.")
+    parser = argparse.ArgumentParser(
+        description="Build compact ontology bundles. Defaults to the current NCIt+DO ontology mainline."
+    )
     parser.add_argument("--processed_dir", type=Path, default=DEFAULT_PROCESSED_DIR)
     parser.add_argument("--output_dir", type=Path, default=DEFAULT_OUTPUT_DIR)
+    parser.add_argument(
+        "--variants",
+        nargs="+",
+        choices=ALL_VARIANTS,
+        default=list(DEFAULT_VARIANTS),
+        help=(
+            "Ontology bundle variants to write. Default is ncit_do only; "
+            "SNOMED/UMLS variants are legacy/explicit options."
+        ),
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    summary = build_ablation_bundles(args.processed_dir, args.output_dir)
+    summary = build_ablation_bundles(args.processed_dir, args.output_dir, args.variants)
     for name, record in summary["variants"].items():
         print(
             f"{name}: concepts={record['concept_count']} | "

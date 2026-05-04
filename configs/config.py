@@ -66,6 +66,8 @@ class ModelConfig:
     text_dual_fusion_dropout: float = 0.10
     text_dual_graph_weight_max: float = 1.0
     text_dual_fusion_mode: str = "convex"
+    text_dual_gate_init_bias: float = -6.0
+    text_dual_apply_post_norm: bool = False
 
 
 @dataclass
@@ -82,6 +84,45 @@ class LossConfig:
     mmd_sigma_multipliers: List[float] = None
     mmd_unbiased: bool = True
     mmd_clamp_nonneg: bool = True
+    graph_aux_align_enabled: bool = False
+    graph_aux_align_weight: float = 0.01
+    graph_aux_align_warmup_epochs: int = 8
+    graph_aux_align_conf_threshold: float = 0.7
+    graph_aux_align_decay_to: float = 0.2
+
+
+@dataclass
+class OntologyConfig:
+    enabled: bool = False
+    max_concepts_per_report: int = 30
+    min_concept_confidence: float = 0.7
+    remove_generic_concepts: bool = True
+    remove_leakage_concepts: bool = True
+    allowed_semantic_types: List[str] = None
+    edge_hop_limit: int = 1
+    edge_dropout: float = 0.2
+    evidence_only: bool = False
+    evidence_keywords: List[str] = None
+    evidence_deny_keywords: List[str] = None
+    generic_concept_denylist: List[str] = None
+    leakage_concept_denylist: List[str] = None
+
+
+@dataclass
+class HierarchyConfig:
+    enabled: bool = False
+    use_section_edges: bool = True
+    use_sentence_similarity_edges: bool = True
+    sentence_topk: int = 5
+    min_sentence_sim: float = 0.3
+    edge_dropout: float = 0.1
+    max_sentences_per_report: int = 128
+
+
+@dataclass
+class TextGraphConfig:
+    gate_init: float = 0.1
+    gate_max: float = 0.3
 
 
 @dataclass
@@ -111,6 +152,9 @@ class Config:
     graph: GraphConfig
     model: ModelConfig
     loss: LossConfig
+    ontology: OntologyConfig
+    hierarchy: HierarchyConfig
+    text_graph: TextGraphConfig
     train: TrainConfig
     output: OutputConfig
 
@@ -137,6 +181,9 @@ def get_config(path: str) -> Config:
     graph = raw.get("graph", {})
     model = raw.get("model", {})
     loss = raw.get("loss", {})
+    ontology = raw.get("ontology", {})
+    hierarchy = raw.get("hierarchy", {})
+    text_graph = raw.get("text_graph", {})
     train = raw.get("train", {})
     output = raw.get("output", {})
 
@@ -208,6 +255,8 @@ def get_config(path: str) -> Config:
             text_dual_fusion_dropout=float(model.get("text_dual_fusion_dropout", 0.10)),
             text_dual_graph_weight_max=float(model.get("text_dual_graph_weight_max", 1.0)),
             text_dual_fusion_mode=str(model.get("text_dual_fusion_mode", "convex")),
+            text_dual_gate_init_bias=float(model.get("text_dual_gate_init_bias", -6.0)),
+            text_dual_apply_post_norm=bool(model.get("text_dual_apply_post_norm", False)),
         ),
         loss=LossConfig(
             alpha_txt=float(loss.get("alpha_txt", 0.5)),
@@ -221,6 +270,39 @@ def get_config(path: str) -> Config:
             mmd_sigma_multipliers=loss.get("mmd_sigma_multipliers", [0.5, 1.0, 2.0]),
             mmd_unbiased=bool(loss.get("mmd_unbiased", True)),
             mmd_clamp_nonneg=bool(loss.get("mmd_clamp_nonneg", True)),
+            graph_aux_align_enabled=bool(loss.get("graph_aux_align_enabled", False)),
+            graph_aux_align_weight=float(loss.get("graph_aux_align_weight", 0.01)),
+            graph_aux_align_warmup_epochs=int(loss.get("graph_aux_align_warmup_epochs", 8)),
+            graph_aux_align_conf_threshold=float(loss.get("graph_aux_align_conf_threshold", 0.7)),
+            graph_aux_align_decay_to=float(loss.get("graph_aux_align_decay_to", 0.2)),
+        ),
+        ontology=OntologyConfig(
+            enabled=bool(ontology.get("enabled", False)),
+            max_concepts_per_report=int(ontology.get("max_concepts_per_report", 30)),
+            min_concept_confidence=float(ontology.get("min_concept_confidence", 0.7)),
+            remove_generic_concepts=bool(ontology.get("remove_generic_concepts", True)),
+            remove_leakage_concepts=bool(ontology.get("remove_leakage_concepts", True)),
+            allowed_semantic_types=ontology.get("allowed_semantic_types", []),
+            edge_hop_limit=int(ontology.get("edge_hop_limit", 1)),
+            edge_dropout=float(ontology.get("edge_dropout", 0.2)),
+            evidence_only=bool(ontology.get("evidence_only", False)),
+            evidence_keywords=ontology.get("evidence_keywords", []),
+            evidence_deny_keywords=ontology.get("evidence_deny_keywords", []),
+            generic_concept_denylist=ontology.get("generic_concept_denylist", []),
+            leakage_concept_denylist=ontology.get("leakage_concept_denylist", []),
+        ),
+        hierarchy=HierarchyConfig(
+            enabled=bool(hierarchy.get("enabled", False)),
+            use_section_edges=bool(hierarchy.get("use_section_edges", True)),
+            use_sentence_similarity_edges=bool(hierarchy.get("use_sentence_similarity_edges", True)),
+            sentence_topk=int(hierarchy.get("sentence_topk", 5)),
+            min_sentence_sim=float(hierarchy.get("min_sentence_sim", 0.3)),
+            edge_dropout=float(hierarchy.get("edge_dropout", 0.1)),
+            max_sentences_per_report=int(hierarchy.get("max_sentences_per_report", 128)),
+        ),
+        text_graph=TextGraphConfig(
+            gate_init=float(text_graph.get("gate_init", 0.1)),
+            gate_max=float(text_graph.get("gate_max", 0.3)),
         ),
         train=TrainConfig(
             num_epochs=int(train.get("num_epochs", 20)),

@@ -12,9 +12,9 @@ from pathlib import Path
 from textwrap import shorten
 
 from pathology_report_extraction.common.pdf_utils import ensure_dir
-from pathology_report_extraction.common.pipeline_defaults import DEFAULT_OUTPUT_ROOT, GRAPH_OUTPUT_SUBDIRS
+from pathology_report_extraction.common.pipeline_defaults import DEFAULT_HIERARCHY_GRAPH_ROOT, DEFAULT_OUTPUT_ROOT
 
-DEFAULT_GRAPH_ROOT = DEFAULT_OUTPUT_ROOT / GRAPH_OUTPUT_SUBDIRS["masked"]
+DEFAULT_GRAPH_ROOT = DEFAULT_HIERARCHY_GRAPH_ROOT
 DEFAULT_OUTPUT_DIR = DEFAULT_OUTPUT_ROOT / "graph_visualizations"
 
 

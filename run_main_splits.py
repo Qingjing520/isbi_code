@@ -92,6 +92,13 @@ def _build_cfg(base_cfg: Any, args: argparse.Namespace, split_idx: int) -> Any:
     return cfg
 
 
+def _emit(line: str, train_log_path: str | None = None) -> None:
+    print(line, flush=True)
+    if train_log_path:
+        with open(train_log_path, "a", encoding="utf-8") as handle:
+            handle.write(line + "\n")
+
+
 def _train_or_resume(cfg: Any, force_rerun: bool) -> tuple[dict[str, float], str]:
     os.makedirs(cfg.output.exp_dir, exist_ok=True)
     best_ckpt = os.path.join(cfg.output.exp_dir, "best_model.pt")
@@ -149,9 +156,11 @@ def main() -> None:
 
     for split_idx in range(args.split_offset, args.split_offset + args.num_splits):
         cfg = _build_cfg(base_cfg, args, split_idx)
-        print(f"[split {split_idx}] start | split_file={cfg.data.split_file}")
-        if getattr(cfg.data, "graph_manifest_csv", ""):
-            print(f"[split {split_idx}] manifest={cfg.data.graph_manifest_csv}")
+        train_log_path = os.path.join(cfg.output.exp_dir, "train.log")
+        will_reuse = (not args.force_rerun) and os.path.exists(os.path.join(cfg.output.exp_dir, "best_model.pt"))
+        if will_reuse:
+            os.makedirs(cfg.output.exp_dir, exist_ok=True)
+            _emit(f"[split {split_idx}] start | split_file={cfg.data.split_file}", train_log_path)
         metrics, status = _train_or_resume(cfg, force_rerun=args.force_rerun)
         row = {
             "split_idx": split_idx,
@@ -163,13 +172,16 @@ def main() -> None:
             "graph_manifest_csv": getattr(cfg.data, "graph_manifest_csv", ""),
         }
         rows.append(row)
-        print(
+        done_line = (
             f"[split {split_idx}] done | status={status} | "
             f"acc={row['acc']:.4f} | auc={row['auc']:.4f}"
         )
+        _emit(done_line, train_log_path)
+        _emit("", train_log_path)
+        _emit("", train_log_path)
 
     _write_results(args.output_root, rows)
-    print(f"[summary] output_root={os.path.abspath(args.output_root)}")
+    _emit(f"[summary] output_root={os.path.abspath(args.output_root)}")
 
 
 if __name__ == "__main__":

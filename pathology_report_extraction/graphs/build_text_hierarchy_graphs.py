@@ -37,8 +37,10 @@ from pathology_report_extraction.common.pipeline_defaults import (
     CONCEPT_GRAPH_OUTPUT_SUBDIRS,
     CONCEPT_OUTPUT_SUBDIRS,
     CONCH_OUTPUT_SUBDIRS,
+    DEFAULT_HIERARCHY_GRAPH_ROOT,
     DEFAULT_OUTPUT_ROOT,
     GRAPH_OUTPUT_SUBDIRS,
+    HIERARCHY_GRAPH_TYPE_DIRS,
 )
 from pathology_report_extraction.config.config import get_bool, get_path, get_stage_config, get_value, load_yaml_config
 
@@ -46,8 +48,9 @@ from pathology_report_extraction.config.config import get_bool, get_path, get_st
 LOGGER = logging.getLogger("build_text_hierarchy_graphs")
 
 DEFAULT_INPUT_DIR = DEFAULT_OUTPUT_ROOT / CONCH_OUTPUT_SUBDIRS["masked"]
-DEFAULT_OUTPUT_DIR = DEFAULT_OUTPUT_ROOT / GRAPH_OUTPUT_SUBDIRS["masked"]
+DEFAULT_OUTPUT_DIR = DEFAULT_HIERARCHY_GRAPH_ROOT
 FEATURE_DIM = 512
+DATASET_DIR_NAMES = {"BRCA", "KIRC", "LUSC"}
 
 NODE_TYPE_TO_ID = {"document": 0, "section": 1, "sentence": 2}
 EDGE_TYPE_TO_ID = {"parent": 0, "next": 1}
@@ -97,6 +100,13 @@ def iter_metadata_jsons(input_dir: Path) -> list[Path]:
 
 def load_json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def resolve_library_relative_path(relative_path: Path, graph_type: str) -> Path:
+    parts = relative_path.parts
+    if parts and parts[0].upper() in DATASET_DIR_NAMES:
+        return Path(parts[0]) / HIERARCHY_GRAPH_TYPE_DIRS[graph_type] / Path(*parts[1:])
+    return Path(HIERARCHY_GRAPH_TYPE_DIRS[graph_type]) / relative_path
 
 
 def load_optional_concept_annotation(
@@ -818,6 +828,8 @@ def build_graph_for_document(
 ) -> dict:
     payload = clean_payload(load_json(metadata_json_path), metadata_json_path=metadata_json_path, input_root=input_root)
     relative_path = metadata_json_path.relative_to(input_root)
+    if Path(output_root).resolve() == DEFAULT_HIERARCHY_GRAPH_ROOT.resolve() and not attach_concepts:
+        relative_path = resolve_library_relative_path(relative_path, "basic")
     output_json_path = output_root / relative_path
     output_pt_path = output_root / relative_path.with_suffix(".pt")
     ensure_dir(output_json_path.parent)
@@ -1030,7 +1042,11 @@ def parse_args() -> argparse.Namespace:
             )
             graph_output_subdirs.update(get_value(config, "output_subdirs", {}) or {})
             default_key = "masked"
-            output_default = output_root / graph_output_subdirs.get(filter_mode, graph_output_subdirs[default_key])
+            output_default = (
+                output_root / graph_output_subdirs.get(filter_mode, graph_output_subdirs[default_key])
+                if attach_concepts_default
+                else DEFAULT_HIERARCHY_GRAPH_ROOT
+            )
         if attach_concepts_default:
             concept_output_subdirs = dict(CONCEPT_OUTPUT_SUBDIRS)
             concept_output_subdirs.update(

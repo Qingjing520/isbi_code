@@ -17,14 +17,15 @@ from typing import Any
 from pathology_report_extraction.common.pdf_utils import ensure_dir, write_json
 from pathology_report_extraction.common.pipeline_defaults import (
     DEFAULT_LABEL_CSV,
+    DEFAULT_HIERARCHY_GRAPH_ROOT,
     DEFAULT_MANIFEST_OUTPUT_SUBDIR,
     DEFAULT_OUTPUT_ROOT,
-    GRAPH_OUTPUT_SUBDIRS,
+    HIERARCHY_GRAPH_TYPE_DIRS,
 )
 from pathology_report_extraction.config.config import get_path, get_stage_config, get_value, load_yaml_config
 
 
-DEFAULT_GRAPH_DIR = DEFAULT_OUTPUT_ROOT / GRAPH_OUTPUT_SUBDIRS["masked"]
+DEFAULT_GRAPH_DIR = DEFAULT_HIERARCHY_GRAPH_ROOT / "BRCA" / HIERARCHY_GRAPH_TYPE_DIRS["basic"]
 DEFAULT_SPLIT_CSV: Path | None = None
 DEFAULT_MANIFEST_DIR = DEFAULT_OUTPUT_ROOT / DEFAULT_MANIFEST_OUTPUT_SUBDIR
 
@@ -336,9 +337,7 @@ def parse_args() -> argparse.Namespace:
 
     graph_input_default = get_path(stage_block, "graph_dir", DEFAULT_GRAPH_DIR, config_path)
     if stage_block and stage_block.get("graph_dir") in (None, ""):
-        graph_output_subdirs = dict(GRAPH_OUTPUT_SUBDIRS)
-        graph_output_subdirs.update(get_value(get_stage_config(raw_config, "build_text_hierarchy_graphs"), "output_subdirs", {}) or {})
-        graph_input_default = output_root / graph_output_subdirs.get(filter_mode, graph_output_subdirs["masked"])
+        graph_input_default = DEFAULT_HIERARCHY_GRAPH_ROOT
 
     manifest_output_dir_default = get_path(stage_block, "output_dir", DEFAULT_MANIFEST_DIR, config_path)
     if stage_block and stage_block.get("output_dir") in (None, ""):

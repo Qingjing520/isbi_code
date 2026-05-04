@@ -210,6 +210,8 @@ class DualTextFusion(nn.Module):
         dropout: float = 0.1,
         graph_weight_max: float = 1.0,
         fusion_mode: str = "convex",
+        gate_init_bias: float = -6.0,
+        apply_post_norm: bool = False,
     ):
         super().__init__()
         if not 0.0 <= graph_weight_max <= 1.0:
@@ -219,6 +221,7 @@ class DualTextFusion(nn.Module):
         if fusion_mode not in {"convex", "residual"}:
             raise ValueError("fusion_mode must be 'convex' or 'residual'.")
         self.fusion_mode = fusion_mode
+        self.apply_post_norm = bool(apply_post_norm)
         self.gate = nn.Sequential(
             nn.Linear(dim * 2, dim),
             nn.GELU(),
@@ -226,6 +229,10 @@ class DualTextFusion(nn.Module):
             nn.Linear(dim, 1),
         )
         self.out_norm = nn.LayerNorm(dim)
+        final_gate = self.gate[-1]
+        if isinstance(final_gate, nn.Linear):
+            nn.init.zeros_(final_gate.weight)
+            nn.init.constant_(final_gate.bias, float(gate_init_bias))
 
     def forward(self, sentence_vec: torch.Tensor, graph_vec: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         raw_graph_gate = torch.sigmoid(self.gate(torch.cat([sentence_vec, graph_vec], dim=-1)))
@@ -235,7 +242,9 @@ class DualTextFusion(nn.Module):
             fused = sentence_vec + graph_weight * graph_vec
         else:
             fused = sentence_gate * sentence_vec + graph_weight * graph_vec
-        return self.out_norm(fused), sentence_gate
+        if self.apply_post_norm:
+            fused = self.out_norm(fused)
+        return fused, sentence_gate
 
 
 class HierTextBranch(nn.Module):

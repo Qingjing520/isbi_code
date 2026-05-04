@@ -34,7 +34,7 @@ data:
   # BRCA hierarchy graph:
   #   split_file: "F:\\Tasks\\Split_Table\\BRCA\\split_149.csv"
   #   label_file: "F:\\Tasks\\Pathologic_Stage_Label\\BRCA_pathologic_stage.csv"
-  #   text_dir: "F:\\Tasks\\isbi_code\\pathology_report_extraction\\Output\\text_hierarchy_graphs_masked\\BRCA"
+  #   text_dir: "F:\\Tasks\\Pathology_Report_Hierarchy_Graphs\\BRCA\\basic_hierarchy"
   #   text_mode: hierarchy_graph
   # KIRC sentence-only:
   #   split_file: "F:\\Tasks\\Split_Table\\KIRC\\split_0.csv"
@@ -107,6 +107,81 @@ model:
   text_dual_graph_weight_max: 1.0
   text_dual_fusion_mode: convex  # convex or residual
 
+text_graph:
+  # Bounded residual graph gate. With residual fusion, the text vector is:
+  # sentence_vec + gate * graph_vec. Keep small for noise-aware experiments.
+  gate_init: 0.1
+  gate_max: 0.3
+
+hierarchy:
+  enabled: false
+  use_section_edges: true
+  use_sentence_similarity_edges: true
+  sentence_topk: 5
+  min_sentence_sim: 0.3
+  edge_dropout: 0.1
+  max_sentences_per_report: 128
+
+ontology:
+  enabled: false
+  max_concepts_per_report: 30
+  min_concept_confidence: 0.7
+  remove_generic_concepts: true
+  remove_leakage_concepts: true
+  allowed_semantic_types: []
+  edge_hop_limit: 1
+  edge_dropout: 0.2
+  evidence_only: false
+  evidence_keywords:
+    - tumor size
+    - size
+    - invasion
+    - invasive
+    - lymph node
+    - lymph nodes
+    - lymphatic
+    - nodal
+    - margin
+    - margins
+    - metastasis
+    - metastatic
+    - anatomic extent
+    - extension
+    - extranodal
+    - capsule
+    - vascular invasion
+    - lymphovascular invasion
+    - perineural invasion
+  evidence_deny_keywords:
+    - estrogen receptor
+    - progesterone receptor
+    - hormone receptor
+    - er
+    - pr
+    - her2
+    - immunohistochemistry
+    - procedure
+    - mastectomy
+    - biopsy
+    - carcinoma
+    - adenocarcinoma
+    - neoplasm
+  generic_concept_denylist:
+    - Disease
+    - Neoplasm
+    - Patient
+    - Procedure
+    - Finding
+    - Clinical finding
+    - Body structure
+  leakage_concept_denylist:
+    - stage
+    - staging
+    - pathologic stage
+    - TNM
+    - AJCC
+    - grade
+
 loss:
   warmup_epochs: 3
   align_decay_to: 0.3
@@ -124,6 +199,11 @@ loss:
     - 2.0
   mmd_unbiased: true
   mmd_clamp_nonneg: true
+  graph_aux_align_enabled: false
+  graph_aux_align_weight: 0.01
+  graph_aux_align_warmup_epochs: 8
+  graph_aux_align_conf_threshold: 0.7
+  graph_aux_align_decay_to: 0.2
 
 train:
   num_epochs: 60

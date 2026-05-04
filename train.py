@@ -23,9 +23,56 @@ from models.hier_text import DualTextFusion, HierTextBranch
 from models.text_graph import TextHierarchyGraphEncoder
 from utils.graph_utils import build_graph_features
 from utils.metrics import safe_auc
+from utils.text_graph_utils import prepare_text_graph_payload
 
 
 _SECTION_TITLE_CACHE: dict[str, list[str]] = {}
+
+
+def _split_idx_from_split_file(split_file: str) -> int | None:
+    match = re.search(r"split_(\d+)\.csv$", str(split_file))
+    return int(match.group(1)) if match else None
+
+
+def _emit_train_line(line: str, log_path: str) -> None:
+    print(line, flush=True)
+    with open(log_path, "a", encoding="utf-8") as handle:
+        handle.write(line + "\n")
+
+
+def _compact_target_metrics(metrics: dict) -> dict:
+    """Keep log.jsonl useful for tooling without dumping per-sample details."""
+    compact = {
+        "acc": float(metrics["acc"]),
+        "auc": float(metrics["auc"]),
+    }
+    analysis = metrics.get("analysis")
+    if isinstance(analysis, dict):
+        compact_analysis = {
+            key: value
+            for key, value in analysis.items()
+            if key != "sample_details"
+        }
+        if compact_analysis:
+            compact["analysis"] = compact_analysis
+    return compact
+
+
+def _mean_graph_filter_stats(extras: list[dict]) -> dict[str, float]:
+    rows: list[dict] = []
+    for extra in extras:
+        stats = extra.get("graph_filter_stats") if isinstance(extra, dict) else None
+        if isinstance(stats, list):
+            rows.extend([x for x in stats if isinstance(x, dict)])
+    if not rows:
+        return {}
+    keys = sorted({str(key) for row in rows for key in row.keys()})
+    out: dict[str, float] = {}
+    for key in keys:
+        vals = [float(row[key]) for row in rows if key in row and row[key] is not None]
+        if vals:
+            out[f"avg_{key}"] = float(np.mean(vals))
+    return out
 
 
 def set_seed(seed: int):
@@ -130,6 +177,8 @@ def encode_text_batch(
     text_graph_use_next_edges: bool = True,
     use_section_title_embedding: bool = False,
     section_title_to_id: dict[str, int] | None = None,
+    hierarchy_cfg=None,
+    ontology_cfg=None,
 ) -> Tuple[List[torch.Tensor], torch.Tensor, dict]:
     if text_mode == "dual_text":
         if pool_txt is None or dual_text_fusion is None:
@@ -147,6 +196,8 @@ def encode_text_batch(
             graph_vecs: List[torch.Tensor] = []
             graph_topology_descs: List[torch.Tensor] = []
             graph_json_paths: List[str] = []
+            graph_filter_stats: list[dict[str, float]] = []
+            graph_payloads_filtered: list[dict] = []
             for payload in txt_list:
                 graph_payload = payload["hierarchy_graph"]  # type: ignore[index]
                 if not isinstance(graph_payload, dict):
@@ -154,12 +205,19 @@ def encode_text_batch(
                 if "node_features" not in graph_payload:
                     raise KeyError("dual_text graph payload missing 'node_features'.")
 
+                graph_json_path = str(payload.get("graph_json_path", ""))
+                graph_payload, graph_stats = prepare_text_graph_payload(
+                    graph_payload,
+                    hierarchy_cfg=hierarchy_cfg,
+                    ontology_cfg=ontology_cfg,
+                    graph_json_path=graph_json_path,
+                    training=bool(text_graph_encoder.training),
+                )
                 x = mapper(graph_payload["node_features"].float())
                 allowed_forward_relation_ids = _allowed_forward_relation_ids_from_payload(
                     payload=graph_payload,
                     text_graph_use_next_edges=text_graph_use_next_edges,
                 )
-                graph_json_path = str(payload.get("graph_json_path", ""))
                 section_title_ids = None
                 section_node_type_id = _node_type_id_from_payload(graph_payload, "section")
                 if use_section_title_embedding and section_title_to_id and section_node_type_id is not None:
@@ -188,6 +246,8 @@ def encode_text_batch(
                 graph_vecs.append(pooled_vec)
                 graph_topology_descs.append(_graph_structure_descriptor(graph_payload))
                 graph_json_paths.append(graph_json_path)
+                graph_filter_stats.append(graph_stats)
+                graph_payloads_filtered.append(graph_payload)
 
             graph_vec = torch.stack(graph_vecs, dim=0)
             fused_vec, gates = dual_text_fusion(sentence_vec, graph_vec)
@@ -199,6 +259,8 @@ def encode_text_batch(
                 "fusion_gate": gates,
                 "graph_json_paths": graph_json_paths,
                 "graph_topology_descs": graph_topology_descs,
+                "graph_filter_stats": graph_filter_stats,
+                "graph_payloads_filtered": graph_payloads_filtered,
             }
             return graph_node_lists, fused_vec, extras
 
@@ -264,12 +326,20 @@ def encode_text_batch(
         node_lists: List[torch.Tensor] = []
         pooled_vecs: List[torch.Tensor] = []
         graph_topology_descs: List[torch.Tensor] = []
+        graph_filter_stats: list[dict[str, float]] = []
         for payload in txt_list:
             if not isinstance(payload, dict):
                 raise TypeError("Expected dict payload for graph-aware text encoding.")
             if "node_features" not in payload:
                 raise KeyError("Graph payload missing 'node_features'.")
 
+            payload, graph_stats = prepare_text_graph_payload(
+                payload,
+                hierarchy_cfg=hierarchy_cfg,
+                ontology_cfg=ontology_cfg,
+                graph_json_path=str(payload.get("graph_json_path", "")),
+                training=bool(text_graph_encoder.training),
+            )
             x = mapper(payload["node_features"].float())
             allowed_forward_relation_ids = _allowed_forward_relation_ids_from_payload(
                 payload=payload,
@@ -286,7 +356,11 @@ def encode_text_batch(
             node_lists.append(updated_nodes)
             pooled_vecs.append(pooled_vec)
             graph_topology_descs.append(_graph_structure_descriptor(payload))
-        return node_lists, torch.stack(pooled_vecs, dim=0), {"graph_topology_descs": graph_topology_descs}
+            graph_filter_stats.append(graph_stats)
+        return node_lists, torch.stack(pooled_vecs, dim=0), {
+            "graph_topology_descs": graph_topology_descs,
+            "graph_filter_stats": graph_filter_stats,
+        }
 
     if pool_txt is None:
         raise RuntimeError("pool_txt must be available for non-graph text encoding.")
@@ -386,7 +460,13 @@ def _collect_node_type_features(
 def _graph_payloads_for_text_mode(
     txt_list: List[torch.Tensor | dict],
     text_mode: str,
+    extra: dict | None = None,
 ) -> List[torch.Tensor | dict]:
+    if isinstance(extra, dict):
+        filtered = extra.get("graph_payloads_filtered")
+        if isinstance(filtered, list) and filtered:
+            return filtered
+
     if text_mode != "dual_text":
         return txt_list
 
@@ -501,6 +581,26 @@ def _linear_decay_factor(epoch: int, total_epochs: int, to: float) -> float:
     return float((1.0 - t) * 1.0 + t * to)
 
 
+def _bounded_gate_init_bias(gate_init: float, gate_max: float) -> float:
+    """Return the raw sigmoid bias for a desired bounded gate value."""
+    gate_max = max(float(gate_max), 1e-6)
+    p = max(min(float(gate_init) / gate_max, 0.999), 1e-4)
+    return float(math.log(p / (1.0 - p)))
+
+
+def _capture_torch_rng_state() -> tuple[torch.Tensor, list[torch.Tensor] | None]:
+    cpu_state = torch.random.get_rng_state()
+    cuda_state = torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None
+    return cpu_state, cuda_state
+
+
+def _restore_torch_rng_state(state: tuple[torch.Tensor, list[torch.Tensor] | None]) -> None:
+    cpu_state, cuda_state = state
+    torch.random.set_rng_state(cpu_state)
+    if cuda_state is not None and torch.cuda.is_available():
+        torch.cuda.set_rng_state_all(cuda_state)
+
+
 def _ts() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -545,6 +645,7 @@ def _build_text_modules(cfg, device: torch.device):
             hidden=cfg.model.attn_pool_hidden,
             dropout=cfg.model.attn_pool_dropout,
         ).to(device)
+        aux_rng_state = _capture_torch_rng_state()
         if text_use_graph_structure:
             text_graph_encoder = TextHierarchyGraphEncoder(
                 dim=cfg.model.feat_dim,
@@ -567,12 +668,26 @@ def _build_text_modules(cfg, device: torch.device):
                 use_section_title_embedding=use_section_title_embedding,
                 num_section_title_types=_num_section_title_types_from_cfg(cfg),
             ).to(device)
+        gate_max = float(
+            getattr(
+                getattr(cfg, "text_graph", None),
+                "gate_max",
+                getattr(cfg.model, "text_dual_graph_weight_max", 1.0),
+            )
+        )
         dual_text_fusion = DualTextFusion(
             dim=cfg.model.feat_dim,
             dropout=cfg.model.text_dual_fusion_dropout,
-            graph_weight_max=float(getattr(cfg.model, "text_dual_graph_weight_max", 1.0)),
+            graph_weight_max=gate_max,
             fusion_mode=str(getattr(cfg.model, "text_dual_fusion_mode", "convex")),
+            gate_init_bias=float(
+                _bounded_gate_init_bias(float(getattr(getattr(cfg, "text_graph", None), "gate_init", 0.1)), gate_max)
+                if hasattr(cfg, "text_graph")
+                else float(getattr(cfg.model, "text_dual_gate_init_bias", -6.0))
+            ),
+            apply_post_norm=bool(getattr(cfg.model, "text_dual_apply_post_norm", False)),
         ).to(device)
+        _restore_torch_rng_state(aux_rng_state)
     elif _graph_mode_uses_structure(text_mode) and text_use_graph_structure:
         text_graph_encoder = TextHierarchyGraphEncoder(
             dim=cfg.model.feat_dim,
@@ -675,6 +790,7 @@ def evaluate(
     doc_attn_maxima: list[float] = []
     section_attention_mixes: list[float] = []
     document_attention_mixes: list[float] = []
+    eval_graph_stats_rows: list[dict[str, float]] = []
     top_section_counter: Counter[str] = Counter()
     section_title_cache: dict[str, list[str]] = {}
     sample_details: list[dict[str, object]] = []
@@ -708,6 +824,8 @@ def evaluate(
             text_graph_use_next_edges=bool(getattr(cfg.model, "text_graph_use_next_edges", True)),
             use_section_title_embedding=use_section_title_embedding,
             section_title_to_id=section_title_to_id,
+            hierarchy_cfg=getattr(cfg, "hierarchy", None),
+            ontology_cfg=getattr(cfg, "ontology", None),
         )
 
         # Attention pooling
@@ -737,6 +855,9 @@ def evaluate(
             if isinstance(gate_tensor, torch.Tensor):
                 gate_values = [float(x) for x in gate_tensor.detach().cpu().view(-1).tolist()]
                 fusion_gates.extend(gate_values)
+            stats_rows = _txt_extra.get("graph_filter_stats", [])
+            if isinstance(stats_rows, list):
+                eval_graph_stats_rows.extend([x for x in stats_rows if isinstance(x, dict)])
 
             section_mix_values: list[float | None] = [None] * batch_size
             section_mix_list = _txt_extra.get("graph_section_attention_mix", [])
@@ -835,6 +956,7 @@ def evaluate(
 
     if text_mode == "dual_text":
         graph_branch_weights = [1.0 - x for x in fusion_gates]
+        graph_stats_mean = _mean_graph_filter_stats([{"graph_filter_stats": eval_graph_stats_rows}])
         analysis = {
             "fusion_gate_is_sentence_branch_weight": True,
             "fusion_gate_mean": float(np.mean(fusion_gates)) if fusion_gates else None,
@@ -849,6 +971,7 @@ def evaluate(
             "document_attention_mix_mean": float(np.mean(document_attention_mixes)) if document_attention_mixes else None,
             "top_section_counts": dict(top_section_counter.most_common()),
             "sample_details": sample_details,
+            **graph_stats_mean,
         }
     else:
         analysis = {"sample_details": sample_details}
@@ -863,6 +986,16 @@ def evaluate(
 def train_one_split(cfg):
 
     os.makedirs(cfg.output.exp_dir, exist_ok=True)
+    train_log_path = os.path.join(cfg.output.exp_dir, "train.log")
+    with open(train_log_path, "w", encoding="utf-8"):
+        pass
+    split_file = str(getattr(cfg.data, "split_file", ""))
+    split_idx = _split_idx_from_split_file(split_file)
+    if split_idx is not None:
+        _emit_train_line(f"[split {split_idx}] start | split_file={split_file}", train_log_path)
+    elif split_file:
+        _emit_train_line(f"[split] start | split_file={split_file}", train_log_path)
+
     with open(os.path.join(cfg.output.exp_dir, "config.json"), "w", encoding="utf-8") as f:
         json.dump(asdict(cfg), f, indent=2)
 
@@ -941,6 +1074,8 @@ def train_one_split(cfg):
         # print("[CE] use class-weighted CE on source train")
 
     best_metric = -1e9
+    best_epoch = -1
+    best_acc = float("nan")
     best_path = os.path.join(cfg.output.exp_dir, "best_model.pt")
 
     target_iter = iter(target_loader)
@@ -974,7 +1109,14 @@ def train_one_split(cfg):
             "loss_topo": 0.0,
             "loss_text_topology": 0.0,
             "loss_gate": 0.0,
+            "loss_graph_aux": 0.0,
             "graph_weight": 0.0,
+            "avg_concept_total": 0.0,
+            "avg_concept_kept": 0.0,
+            "avg_concept_filtered": 0.0,
+            "avg_hierarchy_edges": 0.0,
+            "avg_ontology_edges": 0.0,
+            "avg_edges_after": 0.0,
             "steps": 0,
         }
 
@@ -1018,6 +1160,8 @@ def train_one_split(cfg):
                 text_graph_use_next_edges=cfg.model.text_graph_use_next_edges,
                 use_section_title_embedding=use_section_title_embedding,
                 section_title_to_id=section_title_to_id,
+                hierarchy_cfg=getattr(cfg, "hierarchy", None),
+                ontology_cfg=getattr(cfg, "ontology", None),
             )
             txt_t_nodes, _txt_t_vec, txt_t_extra = encode_text_batch(
                 txt_list=txt_t,
@@ -1032,6 +1176,8 @@ def train_one_split(cfg):
                 text_graph_use_next_edges=cfg.model.text_graph_use_next_edges,
                 use_section_title_embedding=use_section_title_embedding,
                 section_title_to_id=section_title_to_id,
+                hierarchy_cfg=getattr(cfg, "hierarchy", None),
+                ontology_cfg=getattr(cfg, "ontology", None),
             )
 
             # ===== Classification on SOURCE only =====
@@ -1049,11 +1195,12 @@ def train_one_split(cfg):
             loss_topo = torch.zeros((), device=device)
             loss_text_topology = torch.zeros((), device=device)
             loss_gate = torch.zeros((), device=device)
+            loss_graph_aux = torch.zeros((), device=device)
             graph_weight_mean = torch.zeros((), device=device)
 
             gate_reg_weight = float(_get_optional(cfg, "loss.dual_text_gate_reg_weight", 0.0))
             graph_weight_target = float(_get_optional(cfg, "loss.dual_text_graph_weight_target", 0.2))
-            if text_mode == "dual_text" and gate_reg_weight > 0:
+            if text_mode == "dual_text":
                 gate_tensors = []
                 for extra in (txt_s_extra, txt_t_extra):
                     gate = extra.get("fusion_gate")
@@ -1063,7 +1210,8 @@ def train_one_split(cfg):
                     sentence_weights = torch.cat(gate_tensors, dim=0)
                     graph_weights = 1.0 - sentence_weights
                     graph_weight_mean = graph_weights.detach().mean()
-                    loss_gate = (graph_weights - graph_weight_target).pow(2).mean()
+                    if gate_reg_weight > 0:
+                        loss_gate = (graph_weights - graph_weight_target).pow(2).mean()
 
             if epoch >= warmup_epochs:
                 nodes_s_list, topo_s_list = [], []
@@ -1123,8 +1271,8 @@ def train_one_split(cfg):
                 )
 
                 if text_mode in {"concept_graph", "dual_text"} and text_use_graph_structure:
-                    graph_payloads_s = _graph_payloads_for_text_mode(txt_s, text_mode)
-                    graph_payloads_t = _graph_payloads_for_text_mode(txt_t, text_mode)
+                    graph_payloads_s = _graph_payloads_for_text_mode(txt_s, text_mode, txt_s_extra)
+                    graph_payloads_t = _graph_payloads_for_text_mode(txt_t, text_mode, txt_t_extra)
                     concept_nodes_s = _collect_node_type_features(txt_s_nodes, graph_payloads_s, "concept")
                     concept_nodes_t = _collect_node_type_features(txt_t_nodes, graph_payloads_t, "concept")
                     if concept_nodes_s is not None and concept_nodes_t is not None:
@@ -1147,6 +1295,22 @@ def train_one_split(cfg):
                             clamp_nonneg=cfg.loss.mmd_clamp_nonneg,
                         )
 
+                if (
+                    bool(_get_optional(cfg, "loss.graph_aux_align_enabled", False))
+                    and text_mode == "dual_text"
+                    and epoch >= int(_get_optional(cfg, "loss.graph_aux_align_warmup_epochs", 8))
+                ):
+                    graph_s = txt_s_extra.get("graph_vec")
+                    graph_t = txt_t_extra.get("graph_vec")
+                    if isinstance(graph_s, torch.Tensor) and isinstance(graph_t, torch.Tensor):
+                        loss_graph_aux = mmd_rbf(
+                            graph_s,
+                            graph_t,
+                            sigma_multipliers=cfg.loss.mmd_sigma_multipliers,
+                            unbiased=cfg.loss.mmd_unbiased,
+                            clamp_nonneg=cfg.loss.mmd_clamp_nonneg,
+                        )
+
             loss = (
                 loss_cls
                 + decay_factor
@@ -1158,6 +1322,7 @@ def train_one_split(cfg):
                     + cfg.loss.gamma_text_topology * loss_text_topology
                 )
                 + gate_reg_weight * loss_gate
+                + float(_get_optional(cfg, "loss.graph_aux_align_weight", 0.01)) * loss_graph_aux
             )
 
             optimizer.zero_grad(set_to_none=True)
@@ -1174,7 +1339,15 @@ def train_one_split(cfg):
             running["loss_topo"] += float(loss_topo.item())
             running["loss_text_topology"] += float(loss_text_topology.item())
             running["loss_gate"] += float(loss_gate.item())
+            running["loss_graph_aux"] += float(loss_graph_aux.item())
             running["graph_weight"] += float(graph_weight_mean.item())
+            graph_stats = _mean_graph_filter_stats([txt_s_extra, txt_t_extra])
+            running["avg_concept_total"] += graph_stats.get("avg_concept_total", 0.0)
+            running["avg_concept_kept"] += graph_stats.get("avg_concept_kept", 0.0)
+            running["avg_concept_filtered"] += graph_stats.get("avg_concept_filtered", 0.0)
+            running["avg_hierarchy_edges"] += graph_stats.get("avg_hierarchy_edges", 0.0)
+            running["avg_ontology_edges"] += graph_stats.get("avg_ontology_edges", 0.0)
+            running["avg_edges_after"] += graph_stats.get("avg_edges_after", 0.0)
             running["steps"] += 1
 
         steps = max(running["steps"], 1)
@@ -1187,7 +1360,14 @@ def train_one_split(cfg):
             "loss_topo",
             "loss_text_topology",
             "loss_gate",
+            "loss_graph_aux",
             "graph_weight",
+            "avg_concept_total",
+            "avg_concept_kept",
+            "avg_concept_filtered",
+            "avg_hierarchy_edges",
+            "avg_ontology_edges",
+            "avg_edges_after",
         ]:
             running[k] /= steps
 
@@ -1211,6 +1391,8 @@ def train_one_split(cfg):
 
         if score > best_metric:
             best_metric = score
+            best_epoch = epoch
+            best_acc = float(tgt_metrics["acc"])
             torch.save(
                 {
                     "mapper": mapper.state_dict(),
@@ -1226,20 +1408,28 @@ def train_one_split(cfg):
                 },
                 best_path,
             )
-            print(f"[{_ts()}] [best] save best @ epoch={epoch:03d}, score={best_metric:.4f}")
+            _emit_train_line(
+                f"[{_ts()}] [best] save best @ epoch={epoch:03d}, "
+                f"auc={best_metric:.4f}, acc={best_acc:.4f}",
+                train_log_path,
+            )
 
         stop = stopper.step(score)
 
         summary = {
             "epoch": epoch,
             "train": running,
-            "target": tgt_metrics,
+            "target": _compact_target_metrics(tgt_metrics),
             "score_for_earlystop": float(score),
             "best_metric_so_far": float(best_metric),
+            "best_epoch_so_far": int(best_epoch),
+            "best_acc_so_far": float(best_acc),
             "early_stop": bool(stop),
             "warmup_epochs": warmup_epochs,
             "align_decay_to": align_decay_to,
             "align_decay_factor": float(decay_factor),
+            "graph_aux_align_enabled": bool(_get_optional(cfg, "loss.graph_aux_align_enabled", False)),
+            "graph_aux_align_warmup_epochs": int(_get_optional(cfg, "loss.graph_aux_align_warmup_epochs", 8)),
         }
         with open(os.path.join(cfg.output.exp_dir, "log.jsonl"), "a", encoding="utf-8") as f:
             f.write(json.dumps(summary) + "\n")
@@ -1250,20 +1440,29 @@ def train_one_split(cfg):
         else:
             mode_str = f"align(decay={decay_factor:.3f})"
 
-        print(
+        epoch_line = (
             f"[{_ts()}] [Epoch {epoch:03d}] {mode_str} "
             f"train(loss={running['loss_total']:.4f}, cls={running['loss_cls']:.4f}, "
             f"txt={running['loss_txt']:.4f}, concept={running['loss_concept']:.4f}, "
             f"node={running['loss_node']:.4f}, topo={running['loss_topo']:.4f}, "
             f"text_topo={running['loss_text_topology']:.4f}, "
-            f"gate={running['loss_gate']:.4f}, graph_w={running['graph_weight']:.3f}) | "
+            f"gate={running['loss_gate']:.4f}, graph_aux={running['loss_graph_aux']:.4f}, "
+            f"graph_w={running['graph_weight']:.3f}, "
+            f"concept={running['avg_concept_kept']:.1f}/{running['avg_concept_total']:.1f}, "
+            f"filtered={running['avg_concept_filtered']:.1f}, "
+            f"h_edges={running['avg_hierarchy_edges']:.1f}, o_edges={running['avg_ontology_edges']:.1f}) | "
             f"tgt(acc={tgt_metrics['acc']:.4f}, auc={tgt_metrics['auc']:.4f}) | "
-            f"best={best_metric:.4f}"
+            f"best(auc={best_metric:.4f}, acc={best_acc:.4f}, epoch={best_epoch:03d})"
         )
-        print("")
+        _emit_train_line(epoch_line, train_log_path)
+        _emit_train_line("", train_log_path)
 
         if stop:
-            print(f"[{_ts()}] [EarlyStop] stop at epoch={epoch:03d} (best={best_metric:.4f})")
+            _emit_train_line(
+                f"[{_ts()}] [EarlyStop] stop at epoch={epoch:03d} "
+                f"(best auc={best_metric:.4f}, acc={best_acc:.4f}, epoch={best_epoch:03d})",
+                train_log_path,
+            )
             break
 
     return best_path

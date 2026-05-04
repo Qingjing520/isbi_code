@@ -7,10 +7,10 @@ hierarchy graphs, ontology concept graphs, and training manifests.
 flowchart TD
     A["Raw pathology reports<br/>F:\\Tasks\\Pathology Report"] --> B["Preprocess<br/>text/OCR, cleaning, section split"]
     B --> C["Sentence export<br/>sentence_to_section + section spans"]
-    C --> D["Ontology concept extraction<br/>NCIt / SNOMED / UMLS / DO"]
+    C --> D["Ontology concept extraction<br/>NCIt + DO"]
     C --> E["CONCH sentence encoding<br/>512-d sentence features"]
     D --> F["Sentence + concept auxiliary graphs"]
-    E --> G["Document / Section / Sentence hierarchy graphs"]
+    E --> G["Report hierarchy graph library<br/>basic / ontology concept / word-node variants"]
     F --> H["Training manifests"]
     G --> H
     H --> I["Downstream multimodal training"]
@@ -22,7 +22,10 @@ flowchart TD
 - `Output/sentence_exports_masked/`
 - `Output/concept_annotations_masked/`
 - `Output/sentence_embeddings_conch_masked/`
-- `Output/text_hierarchy_graphs_masked/`
+- `F:\Tasks\Pathology_Report_Hierarchy_Graphs\<BRCA|KIRC|LUSC>\basic_hierarchy`
+- `F:\Tasks\Pathology_Report_Hierarchy_Graphs\<BRCA|KIRC|LUSC>\ontology_concept_hierarchy`
+- `F:\Tasks\Pathology_Report_Hierarchy_Graphs\<BRCA|KIRC|LUSC>\stage_keyword_word_hierarchy`
+- `F:\Tasks\Pathology_Report_Hierarchy_Graphs\<BRCA|KIRC|LUSC>\stage_keyword_word_ontology_hierarchy`
 - `Output/manifests/`
 
 Ontology ablation outputs live under `Output/concept_annotations_ablation/` and

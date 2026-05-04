@@ -24,12 +24,12 @@ from pathology_report_extraction.common.pipeline_defaults import (
     DEFAULT_CONCH_CKPT_PATH,
     DEFAULT_CONCH_REPO_DIR,
     DEFAULT_FILTER_MODE,
+    DEFAULT_HIERARCHY_GRAPH_ROOT,
     DEFAULT_INPUT_DIR,
     DEFAULT_LABEL_CSV,
     DEFAULT_MANIFEST_OUTPUT_SUBDIR,
     DEFAULT_OUTPUT_ROOT,
     DEFAULT_PIPELINE_CONFIG,
-    GRAPH_OUTPUT_SUBDIRS,
     PREPROCESS_OUTPUT_SUBDIRS,
     SENTENCE_EXPORT_OUTPUT_SUBDIRS,
 )
@@ -152,15 +152,18 @@ def run_pipeline(config_path_arg: Path | None, filter_mode_override: str | None,
     )
 
     graph_input_dir = get_path(graph_block, "input_dir", encode_output_dir, config_path)
-    graph_default_subdirs = CONCEPT_GRAPH_OUTPUT_SUBDIRS if get_bool(graph_cfg, "attach_concepts", False) else GRAPH_OUTPUT_SUBDIRS
-    graph_output_dir = _resolve_output_dir(
-        stage_block=graph_block,
-        stage_config=graph_cfg,
-        config_path=config_path,
-        output_root=output_root,
-        filter_mode=filter_mode,
-        default_subdirs=graph_default_subdirs,
-    )
+    attach_concepts = get_bool(graph_cfg, "attach_concepts", False)
+    if attach_concepts:
+        graph_output_dir = _resolve_output_dir(
+            stage_block=graph_block,
+            stage_config=graph_cfg,
+            config_path=config_path,
+            output_root=output_root,
+            filter_mode=filter_mode,
+            default_subdirs=CONCEPT_GRAPH_OUTPUT_SUBDIRS,
+        )
+    else:
+        graph_output_dir = get_path(graph_block, "output_dir", DEFAULT_HIERARCHY_GRAPH_ROOT, config_path)
 
     manifest_output_dir = get_path(manifest_block, "output_dir", output_root / DEFAULT_MANIFEST_OUTPUT_SUBDIR, config_path)
     if manifest_block and manifest_block.get("output_dir") in (None, ""):
@@ -287,13 +290,13 @@ def run_pipeline(config_path_arg: Path | None, filter_mode_override: str | None,
         from pathology_report_extraction.graphs.build_text_hierarchy_graphs import process_all_documents as build_graphs
 
         concept_dir = None
-        if get_bool(graph_cfg, "attach_concepts", False):
+        if attach_concepts:
             concept_dir = get_path(graph_block, "concept_dir", concept_output_dir, config_path)
         summary = build_graphs(
             input_dir=graph_input_dir,
             output_dir=graph_output_dir,
             concept_dir=concept_dir,
-            attach_concepts=get_bool(graph_cfg, "attach_concepts", False),
+            attach_concepts=attach_concepts,
             add_concept_cooccurrence_edges=get_bool(graph_cfg, "add_concept_cooccurrence_edges", True),
             limit=limit if limit is not None else (None if get_value(graph_cfg, "limit", None) is None else int(get_value(graph_cfg, "limit", None))),
         )
@@ -311,7 +314,7 @@ def run_pipeline(config_path_arg: Path | None, filter_mode_override: str | None,
             "input_dir": str(graph_input_dir),
             "output_dir": str(graph_output_dir),
             "concept_dir": str(get_path(graph_block, "concept_dir", concept_output_dir, config_path))
-            if get_bool(graph_cfg, "attach_concepts", False)
+            if attach_concepts
             else None,
         }
 

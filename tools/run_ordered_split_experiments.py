@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 import re
 import statistics
 import subprocess
@@ -21,12 +22,20 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 PYTHON = Path(r"F:\Anaconda\envs\pytorch\python.exe")
 EXPERIMENTS_ROOT = REPO_ROOT / "experiments"
 OUTPUT_ROOT = REPO_ROOT / "pathology_report_extraction" / "Output"
+HIERARCHY_GRAPH_ROOT = Path(r"F:\Tasks\Pathology_Report_Hierarchy_Graphs")
+HIERARCHY_GRAPH_TYPE_DIRS = {
+    "basic": "basic_hierarchy",
+    "ontology_concept": "ontology_concept_hierarchy",
+    "stage_keyword_word": "stage_keyword_word_hierarchy",
+    "stage_keyword_word_ontology": "stage_keyword_word_ontology_hierarchy",
+}
 CONFIG_ROOT = REPO_ROOT / "configs" / "generated" / "ordered_splits"
 DEFAULT_ONTOLOGY_VARIANT = "ncit_do"
-DEFAULT_HIERARCHY_GRAPH_WEIGHT_MAX = 0.2
-DEFAULT_ONTOLOGY_GRAPH_WEIGHT_MAX = 0.2
-DEFAULT_GRAPH_WEIGHT_TARGET = 0.1
+DEFAULT_HIERARCHY_GRAPH_WEIGHT_MAX = 0.1
+DEFAULT_ONTOLOGY_GRAPH_WEIGHT_MAX = 0.1
+DEFAULT_GRAPH_WEIGHT_TARGET = 0.0
 DEFAULT_DUAL_TEXT_FUSION_MODE = "residual"
+DEFAULT_TEXT_GRAPH_GATE_INIT = 0.05
 
 DATASET_ORDER = ("BRCA", "KIRC", "LUSC")
 METHOD_ORDER = (
@@ -112,6 +121,19 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--ontology_variant", type=str, default=DEFAULT_ONTOLOGY_VARIANT)
     parser.add_argument(
+        "--hierarchy_ontology_graph_type",
+        type=str,
+        default=HIERARCHY_GRAPH_TYPE_DIRS["ontology_concept"],
+        choices=[
+            HIERARCHY_GRAPH_TYPE_DIRS["ontology_concept"],
+            HIERARCHY_GRAPH_TYPE_DIRS["stage_keyword_word_ontology"],
+        ],
+        help=(
+            "Graph library subfolder used by sentence-hierarchical-graph-ontology. "
+            "Use stage_keyword_word_ontology_hierarchy for the cleaned word+ontology graph."
+        ),
+    )
+    parser.add_argument(
         "--hierarchy_graph_weight_max",
         type=float,
         default=DEFAULT_HIERARCHY_GRAPH_WEIGHT_MAX,
@@ -122,6 +144,17 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=DEFAULT_ONTOLOGY_GRAPH_WEIGHT_MAX,
         help="Maximum ontology/concept graph residual weight in dual-text fusion.",
+    )
+    parser.add_argument(
+        "--text_graph_gate_init",
+        type=float,
+        default=DEFAULT_TEXT_GRAPH_GATE_INIT,
+        help="Initial bounded graph branch weight. Use 0.0 for identity sanity checks.",
+    )
+    parser.add_argument(
+        "--ontology_evidence_only",
+        action="store_true",
+        help="Keep only staging/pathology evidence concepts for ontology graph branches.",
     )
     parser.add_argument(
         "--graph_weight_target",
@@ -272,14 +305,20 @@ def missing_base_inputs(dataset: str, indices: list[int]) -> list[str]:
 
 
 def hierarchy_graph_dir(dataset: str) -> Path:
-    return OUTPUT_ROOT / "text_hierarchy_graphs_masked" / dataset
+    return HIERARCHY_GRAPH_ROOT / dataset / HIERARCHY_GRAPH_TYPE_DIRS["basic"]
 
 
 def sentence_ontology_graph_dir(dataset: str, variant: str) -> Path:
     return OUTPUT_ROOT / "text_sentence_ontology_graphs_ablation" / variant / dataset
 
 
-def concept_graph_dir(dataset: str, variant: str) -> Path:
+def concept_graph_dir(
+    dataset: str,
+    variant: str,
+    graph_type: str = HIERARCHY_GRAPH_TYPE_DIRS["ontology_concept"],
+) -> Path:
+    if variant == DEFAULT_ONTOLOGY_VARIANT:
+        return HIERARCHY_GRAPH_ROOT / dataset / graph_type
     return OUTPUT_ROOT / "text_concept_graphs_ablation" / variant / dataset
 
 
@@ -293,13 +332,26 @@ def sentence_ontology_manifest_path(dataset: str, variant: str, split_idx: int) 
     )
 
 
-def concept_manifest_path(dataset: str, variant: str, split_idx: int) -> Path:
+def concept_manifest_path(
+    dataset: str,
+    variant: str,
+    split_idx: int,
+    graph_type: str = HIERARCHY_GRAPH_TYPE_DIRS["ontology_concept"],
+) -> Path:
+    if graph_type == HIERARCHY_GRAPH_TYPE_DIRS["ontology_concept"]:
+        return (
+            OUTPUT_ROOT
+            / "manifests"
+            / "ablation"
+            / variant
+            / f"{dataset.lower()}_concept_graph_manifest_split{split_idx}.csv"
+        )
     return (
         OUTPUT_ROOT
         / "manifests"
-        / "ablation"
-        / variant
-        / f"{dataset.lower()}_concept_graph_manifest_split{split_idx}.csv"
+        / "graph_library"
+        / graph_type
+        / f"{dataset.lower()}_{graph_type}_manifest_split{split_idx}.csv"
     )
 
 
@@ -327,6 +379,24 @@ def build_graph_manifest(dataset: str, split_idx: int, graph_dir: Path, output_c
     return output_csv
 
 
+def graph_manifest_matches_dir(manifest: Path, graph_dir: Path) -> bool:
+    if not manifest.exists():
+        return False
+    try:
+        graph_root = str(Path(graph_dir).resolve()).lower()
+        with manifest.open("r", encoding="utf-8-sig", newline="") as handle:
+            reader = csv.DictReader(handle)
+            for row in reader:
+                graph_pt = str(row.get("graph_pt") or "").strip()
+                if not graph_pt:
+                    continue
+                graph_path = Path(graph_pt)
+                return graph_path.exists() and str(graph_path.resolve()).lower().startswith(graph_root)
+    except Exception:
+        return False
+    return False
+
+
 def ensure_graph_manifests(
     dataset: str,
     indices: list[int],
@@ -336,7 +406,7 @@ def ensure_graph_manifests(
     manifests: list[Path] = []
     for split_idx in indices:
         manifest = manifest_path_fn(dataset, split_idx)
-        if not manifest.exists():
+        if not graph_manifest_matches_dir(manifest, graph_dir):
             manifest = build_graph_manifest(dataset, split_idx, graph_dir, manifest)
         manifests.append(manifest)
     return manifests
@@ -415,6 +485,85 @@ def base_payload(
             "text_dual_fusion_dropout": 0.1,
             "text_dual_graph_weight_max": 1.0,
             "text_dual_fusion_mode": str(fusion_mode),
+            "text_dual_gate_init_bias": -6.0,
+            "text_dual_apply_post_norm": False,
+        },
+        "text_graph": {
+            "gate_init": DEFAULT_TEXT_GRAPH_GATE_INIT,
+            "gate_max": 0.3,
+        },
+        "hierarchy": {
+            "enabled": False,
+            "use_section_edges": True,
+            "use_sentence_similarity_edges": True,
+            "sentence_topk": 5,
+            "min_sentence_sim": 0.3,
+            "edge_dropout": 0.1,
+            "max_sentences_per_report": 128,
+        },
+        "ontology": {
+            "enabled": False,
+            "max_concepts_per_report": 30,
+            "min_concept_confidence": 0.7,
+            "remove_generic_concepts": True,
+            "remove_leakage_concepts": True,
+            "allowed_semantic_types": [],
+            "edge_hop_limit": 1,
+            "edge_dropout": 0.2,
+            "evidence_only": False,
+            "evidence_keywords": [
+                "tumor size",
+                "size",
+                "invasion",
+                "invasive",
+                "lymph node",
+                "lymph nodes",
+                "lymphatic",
+                "nodal",
+                "margin",
+                "margins",
+                "metastasis",
+                "metastatic",
+                "anatomic extent",
+                "extension",
+                "extranodal",
+                "capsule",
+                "vascular invasion",
+                "lymphovascular invasion",
+                "perineural invasion",
+            ],
+            "evidence_deny_keywords": [
+                "estrogen receptor",
+                "progesterone receptor",
+                "hormone receptor",
+                "er",
+                "pr",
+                "her2",
+                "immunohistochemistry",
+                "procedure",
+                "mastectomy",
+                "biopsy",
+                "carcinoma",
+                "adenocarcinoma",
+                "neoplasm",
+            ],
+            "generic_concept_denylist": [
+                "Disease",
+                "Neoplasm",
+                "Patient",
+                "Procedure",
+                "Finding",
+                "Clinical finding",
+                "Body structure",
+            ],
+            "leakage_concept_denylist": [
+                "stage",
+                "staging",
+                "pathologic stage",
+                "TNM",
+                "AJCC",
+                "grade",
+            ],
         },
         "loss": {
             "warmup_epochs": 3,
@@ -425,11 +574,16 @@ def base_payload(
             "gamma_topo": 0.1,
             "gamma_text_topology": 0.0,
             "dual_text_gate_reg_weight": 0.0,
-            "dual_text_graph_weight_target": 0.1,
+            "dual_text_graph_weight_target": 0.0,
             "mmd_num_kernels": 3,
             "mmd_sigma_multipliers": [0.5, 1.0, 2.0],
             "mmd_unbiased": True,
             "mmd_clamp_nonneg": True,
+            "graph_aux_align_enabled": False,
+            "graph_aux_align_weight": 0.01,
+            "graph_aux_align_warmup_epochs": 8,
+            "graph_aux_align_conf_threshold": 0.7,
+            "graph_aux_align_decay_to": 0.2,
         },
         "train": {
             "num_epochs": 60,
@@ -455,9 +609,12 @@ def write_config(
     exp_dir: Path,
     graph_manifest_template: str = "",
     *,
+    hierarchy_ontology_graph_type: str = HIERARCHY_GRAPH_TYPE_DIRS["ontology_concept"],
     hierarchy_graph_weight_max: float = DEFAULT_HIERARCHY_GRAPH_WEIGHT_MAX,
     ontology_graph_weight_max: float = DEFAULT_ONTOLOGY_GRAPH_WEIGHT_MAX,
     graph_weight_target: float = DEFAULT_GRAPH_WEIGHT_TARGET,
+    text_graph_gate_init: float = DEFAULT_TEXT_GRAPH_GATE_INIT,
+    ontology_evidence_only: bool = False,
     use_section_title_embedding: bool = True,
     fusion_mode: str = DEFAULT_DUAL_TEXT_FUSION_MODE,
     experiment_tag: str = "",
@@ -469,6 +626,8 @@ def write_config(
         fusion_mode=fusion_mode,
     )
     cfg = DATASETS[dataset]
+    payload["text_graph"]["gate_init"] = float(text_graph_gate_init)
+    payload["ontology"]["evidence_only"] = bool(ontology_evidence_only)
 
     if method == "sentence-only":
         pass
@@ -487,9 +646,11 @@ def write_config(
         payload["model"]["text_graph_num_node_types"] = 3
         payload["model"]["text_graph_num_base_relations"] = 5
         payload["model"]["text_dual_graph_weight_max"] = float(ontology_graph_weight_max)
-        payload["loss"]["alpha_concept"] = 0.2
-        payload["loss"]["gamma_text_topology"] = 0.03
-        payload["loss"]["dual_text_gate_reg_weight"] = 0.01
+        payload["text_graph"]["gate_max"] = float(ontology_graph_weight_max)
+        payload["ontology"]["enabled"] = True
+        payload["loss"]["alpha_concept"] = 0.0
+        payload["loss"]["gamma_text_topology"] = 0.0
+        payload["loss"]["dual_text_gate_reg_weight"] = 0.0
         payload["loss"]["dual_text_graph_weight_target"] = float(graph_weight_target)
     elif method == "sentence-hierarchical-graph":
         graph_dir = hierarchy_graph_dir(dataset)
@@ -506,11 +667,13 @@ def write_config(
         payload["model"]["text_graph_num_node_types"] = 3
         payload["model"]["text_graph_num_base_relations"] = 2
         payload["model"]["text_dual_graph_weight_max"] = float(hierarchy_graph_weight_max)
-        payload["loss"]["gamma_text_topology"] = 0.03
-        payload["loss"]["dual_text_gate_reg_weight"] = 0.01
+        payload["text_graph"]["gate_max"] = float(hierarchy_graph_weight_max)
+        payload["hierarchy"]["enabled"] = True
+        payload["loss"]["gamma_text_topology"] = 0.0
+        payload["loss"]["dual_text_gate_reg_weight"] = 0.0
         payload["loss"]["dual_text_graph_weight_target"] = float(graph_weight_target)
     elif method == "sentence-hierarchical-graph-ontology":
-        graph_dir = concept_graph_dir(dataset, variant)
+        graph_dir = concept_graph_dir(dataset, variant, graph_type=hierarchy_ontology_graph_type)
         payload["data"].update(
             {
                 "text_dir": str(cfg["sentence_text_dir"]),
@@ -521,12 +684,19 @@ def write_config(
                 "text_use_graph_structure": True,
             }
         )
-        payload["model"]["text_graph_num_node_types"] = 4
+        payload["model"]["text_graph_num_node_types"] = (
+            5
+            if hierarchy_ontology_graph_type == HIERARCHY_GRAPH_TYPE_DIRS["stage_keyword_word_ontology"]
+            else 4
+        )
         payload["model"]["text_graph_num_base_relations"] = 6
         payload["model"]["text_dual_graph_weight_max"] = float(ontology_graph_weight_max)
-        payload["loss"]["alpha_concept"] = 0.2
-        payload["loss"]["gamma_text_topology"] = 0.05
-        payload["loss"]["dual_text_gate_reg_weight"] = 0.01
+        payload["text_graph"]["gate_max"] = float(ontology_graph_weight_max)
+        payload["hierarchy"]["enabled"] = True
+        payload["ontology"]["enabled"] = True
+        payload["loss"]["alpha_concept"] = 0.0
+        payload["loss"]["gamma_text_topology"] = 0.0
+        payload["loss"]["dual_text_gate_reg_weight"] = 0.0
         payload["loss"]["dual_text_graph_weight_target"] = float(graph_weight_target)
     else:
         raise ValueError(f"Cannot write config for unsupported method: {method}")
@@ -539,7 +709,13 @@ def write_config(
     return config_path
 
 
-def unavailable_reason(dataset: str, method: str, variant: str, indices: list[int]) -> str:
+def unavailable_reason(
+    dataset: str,
+    method: str,
+    variant: str,
+    indices: list[int],
+    hierarchy_ontology_graph_type: str = HIERARCHY_GRAPH_TYPE_DIRS["ontology_concept"],
+) -> str:
     missing = missing_base_inputs(dataset, indices)
     if missing:
         return "missing base inputs: " + "; ".join(missing)
@@ -557,7 +733,7 @@ def unavailable_reason(dataset: str, method: str, variant: str, indices: list[in
             return f"missing hierarchy graph directory: {graph_dir}"
         return ""
     if method == "sentence-hierarchical-graph-ontology":
-        graph_dir = concept_graph_dir(dataset, variant)
+        graph_dir = concept_graph_dir(dataset, variant, graph_type=hierarchy_ontology_graph_type)
         if not graph_dir.exists():
             return f"missing concept graph directory: {graph_dir}"
         return ""
@@ -683,13 +859,29 @@ def run_task(task: Task, args: argparse.Namespace) -> None:
 
     ensure_dir(task.run_dir)
     log_path = task.run_dir / "ordered_split_runner.log"
+    env = os.environ.copy()
+    env["PYTHONUNBUFFERED"] = "1"
     with log_path.open("a", encoding="utf-8") as log:
         log.write(f"\n[{now()}] START {task.dataset} {task.method}\n")
         log.write(" ".join(cmd) + "\n\n")
         log.flush()
-        completed = subprocess.run(cmd, cwd=REPO_ROOT, stdout=log, stderr=subprocess.STDOUT, text=True)
-        log.write(f"\n[{now()}] END exit={completed.returncode}\n")
-    if completed.returncode != 0:
+        process = subprocess.Popen(
+            cmd,
+            cwd=REPO_ROOT,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+        assert process.stdout is not None
+        for line in process.stdout:
+            print(line, end="", flush=True)
+            log.write(line)
+            log.flush()
+        returncode = process.wait()
+        log.write(f"\n[{now()}] END exit={returncode}\n")
+    if returncode != 0:
         raise RuntimeError(f"Training failed for {task.dataset} {task.method}. See {log_path}")
 
 
@@ -901,7 +1093,13 @@ def main() -> int:
             ensure_dir(method_root(dataset, method) / "records")
             current_run_dir = planned_run_dir(dataset, method, experiment_tag=args.experiment_tag)
             indices, completed_before = task_split_indices(current_run_dir, args)
-            reason = unavailable_reason(dataset, method, args.ontology_variant, indices)
+            reason = unavailable_reason(
+                dataset,
+                method,
+                args.ontology_variant,
+                indices,
+                hierarchy_ontology_graph_type=args.hierarchy_ontology_graph_type,
+            )
             if reason:
                 print(f"[{now()}] SKIP {dataset} {method}: {reason}", flush=True)
                 if not args.dry_run:
@@ -939,24 +1137,30 @@ def main() -> int:
                     / f"{dataset.lower()}_sentence_ontology_graph_manifest_split{{split_idx}}.csv"
                 )
             elif method == "sentence-hierarchical-graph-ontology":
-                graph_dir = concept_graph_dir(dataset, args.ontology_variant)
+                graph_dir = concept_graph_dir(
+                    dataset,
+                    args.ontology_variant,
+                    graph_type=args.hierarchy_ontology_graph_type,
+                )
                 if not args.dry_run:
                     ensure_graph_manifests(
                         dataset=dataset,
                         indices=indices,
                         graph_dir=graph_dir,
-                        manifest_path_fn=lambda dataset_name, split_idx, variant=args.ontology_variant: concept_manifest_path(
+                        manifest_path_fn=lambda dataset_name, split_idx, variant=args.ontology_variant, graph_type=args.hierarchy_ontology_graph_type: concept_manifest_path(
                             dataset_name,
                             variant,
                             split_idx,
+                            graph_type=graph_type,
                         ),
                     )
                 manifest_template = str(
-                    OUTPUT_ROOT
-                    / "manifests"
-                    / "ablation"
-                    / args.ontology_variant
-                    / f"{dataset.lower()}_concept_graph_manifest_split{{split_idx}}.csv"
+                    concept_manifest_path(
+                        dataset,
+                        args.ontology_variant,
+                        split_idx="{split_idx}",  # type: ignore[arg-type]
+                        graph_type=args.hierarchy_ontology_graph_type,
+                    )
                 )
 
             tag = sanitize_tag(args.experiment_tag)
@@ -969,9 +1173,12 @@ def main() -> int:
                     variant=args.ontology_variant,
                     exp_dir=current_run_dir,
                     graph_manifest_template=manifest_template,
+                    hierarchy_ontology_graph_type=args.hierarchy_ontology_graph_type,
                     hierarchy_graph_weight_max=args.hierarchy_graph_weight_max,
                     ontology_graph_weight_max=args.ontology_graph_weight_max,
                     graph_weight_target=args.graph_weight_target,
+                    text_graph_gate_init=args.text_graph_gate_init,
+                    ontology_evidence_only=args.ontology_evidence_only,
                     use_section_title_embedding=args.use_section_title_embedding,
                     fusion_mode=args.fusion_mode,
                     experiment_tag=args.experiment_tag,
@@ -997,6 +1204,7 @@ def main() -> int:
         "new_splits_per_task": args.num_splits,
         "split_offset": args.split_offset if args.split_offset is not None else "auto",
         "ontology_variant": args.ontology_variant,
+        "hierarchy_ontology_graph_type": args.hierarchy_ontology_graph_type,
         "experiment_tag": sanitize_tag(args.experiment_tag),
         "fusion_mode": args.fusion_mode,
         "use_section_title_embedding": bool(args.use_section_title_embedding),

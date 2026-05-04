@@ -6,8 +6,9 @@ experiment outputs are intentionally not source files.
 ## Scripts
 
 - `pathology_report_extraction/build_ontology_ablation_bundles.py`
-  Builds four ontology resources: `ncit_only`, `ncit_do`,
-  `ncit_snomed_mapped`, and `full_multi_ontology`.
+  Builds the current default `ncit_do` ontology resource. Legacy variants
+  (`ncit_only`, `ncit_snomed_mapped`, `full_multi_ontology`) are available only
+  when passed explicitly.
 
 - `tools/run_dual_text_concept_ablation.py`
   Orchestrates concept annotations, concept graphs, manifests, training, and
@@ -40,11 +41,11 @@ F:\Anaconda\envs\pytorch\python.exe F:\Tasks\isbi_code\tools\watch_dual_text_con
 
 ## Re-run
 
-Run the full KIRC/BRCA x four-ontology matrix:
+Run the current KIRC/BRCA NCIt+DO concept-graph mainline:
 
 ```cmd
 cd /d F:\Tasks\isbi_code
-F:\Anaconda\envs\pytorch\python.exe tools\run_dual_text_concept_ablation.py --datasets KIRC BRCA --variants ncit_only ncit_do ncit_snomed_mapped full_multi_ontology --num_splits 3 --force_train
+F:\Anaconda\envs\pytorch\python.exe tools\run_dual_text_concept_ablation.py --datasets KIRC BRCA --variants ncit_do --num_splits 3 --force_train
 ```
 
 Run only preprocessing and manifest generation:
@@ -76,6 +77,6 @@ experiment_records\dual_text_concept_graph_ablation_final.md
 Practical default for the next round:
 
 - KIRC: prefer `ncit_do`; it was the best AUC variant and nearly tied the old raw-text dual baseline.
-- BRCA: prefer `ncit_snomed_mapped` only as the concept-graph candidate; it was best among ontology variants but still below the old raw-text dual baseline.
-- Avoid promoting `full_multi_ontology` as the default until BRCA concept noise and fusion behavior are audited.
+- BRCA: use `ncit_do` for the current compact ontology mainline; the older `ncit_snomed_mapped` result remains useful as a historical recall ablation, not as the default.
+- Avoid promoting SNOMED/UMLS variants as defaults until concept noise and fusion behavior are audited.
 - Keep concept graph auxiliary: generated ablation configs cap `text_dual_graph_weight_max` at `0.2` and use `dual_text_graph_weight_target: 0.1`, so the raw sentence branch remains the primary semantic carrier.

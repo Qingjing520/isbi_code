@@ -10,7 +10,7 @@ The usual processing order is:
 
 1. Preprocess pathology reports into `Document -> Section -> Sentence`.
 2. Export sentence views.
-3. Extract ontology concepts with NCIt/SNOMED/UMLS/DO resources.
+3. Extract ontology concepts with the compact NCIt+DO resources.
 4. Encode sentences with CONCH.
 5. Build text hierarchy graphs and optional concept-enhanced graphs.
 6. Build text graph manifests for downstream training.
@@ -32,7 +32,7 @@ Core entry points:
 Implementation layout:
 
 - `pipeline/`: PDF preprocessing, sentence export, CONCH encoding, and full pipeline orchestration.
-- `ontology/`: NCIt/DO/SNOMED/UMLS resource building, concept extraction, ablation bundles, and audits.
+- `ontology/`: NCIt+DO resource building, concept extraction, ablation bundles, audits, and legacy explicit SNOMED/UMLS support.
 - `graphs/`: hierarchy graph, sentence-ontology graph, and training manifest builders.
 - `labels/`: stage-label extraction and split-label helpers.
 - `visualization/`: hierarchy graph plotting utilities.
@@ -48,6 +48,7 @@ purpose-specific subpackages above.
 - Report root: `F:\Tasks\Pathology Report`
 - Project root: `F:\Tasks\isbi_code`
 - Ontology root: `F:\Tasks\Ontologies\processed`
+- Hierarchy graph root: `F:\Tasks\Pathology_Report_Hierarchy_Graphs\<BRCA|KIRC|LUSC>\<graph_type>`
 - Output root: `F:\Tasks\isbi_code\pathology_report_extraction\Output`
 - Shared config: `F:\Tasks\isbi_code\pathology_report_extraction\config\pipeline.yaml`
 
@@ -91,24 +92,39 @@ F:\Anaconda\envs\pytorch\python.exe F:\Tasks\isbi_code\pathology_report_extracti
 
 ## Output Layout
 
-The default `masked` run writes under `Output`:
+The default `masked` run writes intermediate artifacts under `Output` and keeps
+training-ready hierarchy graph inputs in `F:\Tasks\Pathology_Report_Hierarchy_Graphs`:
 
 ```text
 pathology_report_preprocessed_masked/
 sentence_exports_masked/
 concept_annotations_masked/
 sentence_embeddings_conch_masked/
-text_hierarchy_graphs_masked/
 manifests/
+F:\Tasks\Pathology_Report_Hierarchy_Graphs\
+  BRCA\
+    basic_hierarchy\
+    ontology_concept_hierarchy\
+    stage_keyword_word_hierarchy\
+    stage_keyword_word_ontology_hierarchy\
+  KIRC\
+    basic_hierarchy\
+    ontology_concept_hierarchy\
+    stage_keyword_word_hierarchy\
+    stage_keyword_word_ontology_hierarchy\
+  LUSC\
+    basic_hierarchy\
+    ontology_concept_hierarchy\
+    stage_keyword_word_hierarchy\
+    stage_keyword_word_ontology_hierarchy\
 ```
 
-Ontology ablation outputs use `concept_annotations_ablation/` and graph folders
-keyed by ontology variant, such as `ncit_only`, `ncit_do`,
-`ncit_snomed_mapped`, and `full_multi_ontology`.
+Ontology outputs should use the current `ncit_do` bundle by default. Older
+SNOMED/UMLS variants are retained only for explicit legacy ablations.
 
 ## Notes
 
-- Keep generated data under `Output/`; do not commit it.
+- Keep generated intermediate data under `Output/`; do not commit it.
 - Use `config/pipeline.yaml` as the source of truth for stage parameters.
 - For new experiments, prefer the ordered experiment tools under
   `F:\Tasks\isbi_code\tools`.

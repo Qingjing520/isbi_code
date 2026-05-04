@@ -2,6 +2,10 @@
 
 This is the current high-level map of `F:\Tasks\isbi_code`.
 
+Project-wide naming, organization, and temporary-script cleanup rules are in
+`docs/project_conventions.md`. Codex/agent instructions are mirrored in
+the repository root `AGENTS.md`.
+
 ## Stable Training Surface
 
 - `main.py`
@@ -45,8 +49,8 @@ This is the current high-level map of `F:\Tasks\isbi_code`.
   pipeline orchestration.
 
 - `pathology_report_extraction/ontology/`
-  NCIt/DO/SNOMED/UMLS resource building, ontology concept extraction,
-  ablation-bundle generation, and concept audits.
+  Current NCIt+DO ontology bundle generation, ontology concept extraction,
+  concept audits, and legacy explicit SNOMED/UMLS ablation support.
 
 - `pathology_report_extraction/graphs/`
   Document/Section/Sentence hierarchy graphs, sentence-ontology auxiliary
@@ -106,6 +110,10 @@ small.
 - `pathology_report_extraction/Output/`
   Ignored preprocessing outputs and graph artifacts.
 
+- `F:\Tasks\Pathology_Report_Hierarchy_Graphs`
+  Shared, training-ready pathology report hierarchy graph inputs, organized as
+  `BRCA|KIRC|LUSC / basic_hierarchy|ontology_concept_hierarchy|stage_keyword_word_hierarchy|stage_keyword_word_ontology_hierarchy`.
+
 - `experiment_records/`
   Stable summaries and paper-facing experiment records.
 
@@ -114,3 +122,5 @@ small.
 - Some archived historical scripts still contain old hard-coded defaults; prefer
   the current `run_main_splits.py`, ordered runners, and `tools/data/make_splits.py`
   for new work.
+- Remove one-time temporary scripts and scratch outputs after use. Promote only
+  reusable helpers into stable, documented tools.
