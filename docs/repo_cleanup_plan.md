@@ -16,13 +16,43 @@ ongoing experiments.
 | `train.py` | Main training loop, model construction, eval, analysis hooks | Too large; should be split after current long run finishes |
 | `main.py` | Single-split train/test CLI | Keep as stable public entry |
 | `run_main_splits.py` | Multi-split training CLI | Keep as stable public entry |
-| `run_dual_text_splits.py` | Older dual-text split runner | Candidate for archive after checking old experiment reproducibility |
-| `analyze_*.py` | Experiment analysis scripts | Move to `tools/analysis/` later |
-| `compare_brca_text_modes.py` | Historical comparison runner | Candidate for `tools/experiments/` |
-| `auto_train_next.py` | Historical automation helper | Candidate for archive |
-| `generate_split_tables.py` | Dataset split generation utility | Move to `tools/data/` later |
-| `tmp_paper_extract.txt` | Temporary artifact | Candidate for removal/archive |
-| `test.py` | Untracked Hello World scratch file | Ask before deleting |
+| `tools/experiments/run_dual_text_splits.py` | Older dual-text split runner | Moved out of root; kept for historical reproducibility |
+| `tools/analysis/analyze_*.py` | Experiment analysis scripts | Moved out of root |
+| `tools/experiments/compare_text_modes.py` | Historical comparison runner | Moved and generalized from BRCA-only naming |
+| `tools/archive/auto_train_next.py` | Historical automation helper | Archived |
+| `tools/data/make_splits.py` | Dataset split generation utility | Generalized and merged from older split scripts |
+| `tmp_paper_extract.txt` | Temporary artifact | Removed |
+| `test.py` | Untracked Hello World scratch file | Removed |
+
+## Experiment Output Layout
+
+Runtime experiment outputs under `experiments/` should use this structure:
+
+```text
+experiments/
+  BRCA/
+    sentence-only/
+    sentence-ontology/
+    sentence-hierarchical-graph/
+    sentence-hierarchical-graph-ontology/
+  KIRC/
+    sentence-only/
+    sentence-ontology/
+    sentence-hierarchical-graph/
+    sentence-hierarchical-graph-ontology/
+  LUSC/
+    sentence-only/
+    sentence-ontology/
+    sentence-hierarchical-graph/
+    sentence-hierarchical-graph-ontology/
+```
+
+Each method directory contains `runs/` for split outputs/checkpoints/configs/logs
+and `records/` for generated split-level indexes only. The expected files in
+`records/` are `split_results.csv`, `split_results.json`, and
+`split_results.md`; historical comparison folders should be preserved under
+`runs/_legacy_records/`. Do not create new top-level comparison folders under
+`experiments/`; write cross-method summaries to `experiment_records/` instead.
 
 ## Target Layout
 
@@ -109,15 +139,24 @@ Recommended first commit:
 - `tools/run_dual_text_concept_ablation.py`: central orchestration for ontology ablation.
 - `tools/watch_dual_text_concept_ablation.py`: live watcher.
 - `pathology_report_extraction/build_ontology_ablation_bundles.py`: ontology ablation resource builder.
-- `tools/dual_text_concept_ablation.md`: runbook.
+- `docs/runbooks/dual_text_concept_ablation.md`: runbook.
 - `.gitignore`: ignore generated configs and dynamic ablation summaries.
 
-Recommended second commit after the run finishes:
+Completed cleanup batch:
 
-- Move old top-level analysis scripts into `tools/analysis/`.
-- Move split/data utilities into `tools/data/`.
-- Archive obsolete runners under `tools/archive/`.
-- Replace the mojibake `README.md` with a short clean project overview.
+- Moved old top-level analysis scripts into `tools/analysis/`.
+- Moved old experiment helpers into `tools/experiments/`.
+- Archived the obsolete next-split helper under `tools/archive/`.
+- Merged split generation into `tools/data/make_splits.py`.
+- Merged the two hierarchy visualization scripts into
+  `pathology_report_extraction/visualize_hierarchy_graphs.py`.
+- Merged the two label-preparation helpers into
+  `pathology_report_extraction/prepare_stage_labels.py`.
+- Centralized pathology pipeline paths and output subdirectory names in
+  `pathology_report_extraction/pipeline_defaults.py`.
+- Reused `pdf_utils.py` for common directory and JSON writing helpers.
+- Rewrote the pathology pipeline README files with current `F:\Tasks` paths.
+- Removed scratch/cache files and the corrupted pathology command dump.
 
 ## Notes
 

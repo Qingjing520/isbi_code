@@ -19,7 +19,12 @@ PYTHON = Path(r"F:\Anaconda\envs\pytorch\python.exe")
 ONTOLOGY_PROCESSED_DIR = Path(r"F:\Tasks\Ontologies\processed")
 ONTOLOGY_ABLATION_DIR = ONTOLOGY_PROCESSED_DIR / "ablations"
 OUTPUT_ROOT = REPO_ROOT / "pathology_report_extraction" / "Output"
-LOG_ROOT = REPO_ROOT / "experiments" / "dual_text_concept_graph_ablation_logs"
+EXPERIMENTS_ROOT = REPO_ROOT / "experiments"
+METHOD_DIR = "sentence-hierarchical-graph-ontology"
+LOG_ROOT = EXPERIMENTS_ROOT / "KIRC" / METHOD_DIR / "records" / "shared_dual_text_concept_graph_ablation_logs"
+AUX_GRAPH_WEIGHT_MAX = 0.2
+AUX_GRAPH_WEIGHT_TARGET = 0.1
+EXPERIMENT_TAG = "auxgw20_residual_sectiontitle"
 
 VARIANTS = {
     "ncit_only": ONTOLOGY_ABLATION_DIR / "ncit_only_ontology.json",
@@ -27,6 +32,7 @@ VARIANTS = {
     "ncit_snomed_mapped": ONTOLOGY_ABLATION_DIR / "ncit_snomed_mapped_ontology.json",
     "full_multi_ontology": ONTOLOGY_ABLATION_DIR / "full_multi_ontology_ontology.json",
 }
+DEFAULT_VARIANTS = ["ncit_do"]
 
 DATASETS = {
     "KIRC": {
@@ -59,6 +65,14 @@ def load_json(path: Path) -> dict[str, Any]:
 def write_json(path: Path, payload: dict[str, Any]) -> None:
     ensure_dir(path.parent)
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def experiment_name(dataset: str, variant: str) -> str:
+    return f"{dataset.lower()}_dual_text_concept_graph_{variant}_{EXPERIMENT_TAG}_3splits_nw0"
+
+
+def experiment_dir(dataset: str, variant: str) -> Path:
+    return EXPERIMENTS_ROOT / dataset / METHOD_DIR / "runs" / experiment_name(dataset, variant)
 
 
 def run_command(name: str, args: list[str], log_path: Path) -> None:
@@ -99,7 +113,7 @@ def summary_success(path: Path, success_key: str, total_key: str, allow_skipped:
     return success_count == total_count
 
 
-def build_ontology_bundles() -> None:
+def build_ontology_bundles(variants: list[str]) -> None:
     run_command(
         "build_ontology_ablation_bundles",
         [
@@ -109,6 +123,8 @@ def build_ontology_bundles() -> None:
             str(ONTOLOGY_PROCESSED_DIR),
             "--output_dir",
             str(ONTOLOGY_ABLATION_DIR),
+            "--variants",
+            *variants,
         ],
         LOG_ROOT / "build_ontology_ablation_bundles.log",
     )
@@ -190,8 +206,8 @@ def build_manifest(dataset: str, variant: str, split_idx: int, graph_dir: Path) 
 
 def write_train_config(dataset: str, variant: str, graph_dir: Path, manifest_template: str) -> Path:
     cfg = DATASETS[dataset]
-    config_path = REPO_ROOT / "configs" / "generated" / f"{dataset.lower()}_{variant}_dual_text_concept_graph.yaml"
-    exp_dir = REPO_ROOT / "experiments" / f"{dataset.lower()}_dual_text_concept_graph_{variant}_3splits_nw0"
+    config_path = REPO_ROOT / "configs" / "generated" / f"{dataset.lower()}_{variant}_dual_text_concept_graph_{EXPERIMENT_TAG}.yaml"
+    exp_dir = experiment_dir(dataset, variant)
     payload = {
         "seed": 23,
         "data": {
@@ -237,7 +253,7 @@ def write_train_config(dataset: str, variant: str, graph_dir: Path, manifest_tem
             "hier_readout_hidden": 256,
             "hier_readout_dropout": 0.1,
             "hier_readout_attention_init": -0.5,
-            "use_section_title_embedding": False,
+            "use_section_title_embedding": True,
             "section_title_vocab": [
                 "Document Body",
                 "Diagnosis",
@@ -255,6 +271,8 @@ def write_train_config(dataset: str, variant: str, graph_dir: Path, manifest_tem
                 "Intraoperative Consultation",
             ],
             "text_dual_fusion_dropout": 0.1,
+            "text_dual_graph_weight_max": AUX_GRAPH_WEIGHT_MAX,
+            "text_dual_fusion_mode": "residual",
         },
         "loss": {
             "warmup_epochs": 3,
@@ -265,7 +283,7 @@ def write_train_config(dataset: str, variant: str, graph_dir: Path, manifest_tem
             "gamma_topo": 0.1,
             "gamma_text_topology": 0.05,
             "dual_text_gate_reg_weight": 0.01,
-            "dual_text_graph_weight_target": 0.2,
+            "dual_text_graph_weight_target": AUX_GRAPH_WEIGHT_TARGET,
             "mmd_num_kernels": 3,
             "mmd_sigma_multipliers": [0.5, 1.0, 2.0],
             "mmd_unbiased": True,
@@ -293,7 +311,7 @@ def write_train_config(dataset: str, variant: str, graph_dir: Path, manifest_tem
 
 def train_variant(dataset: str, variant: str, config_path: Path, manifest_template: str, num_splits: int, force: bool) -> Path:
     cfg = DATASETS[dataset]
-    output_root = REPO_ROOT / "experiments" / f"{dataset.lower()}_dual_text_concept_graph_{variant}_3splits_nw0"
+    output_root = experiment_dir(dataset, variant)
     args = [
         str(PYTHON),
         str(REPO_ROOT / "run_main_splits.py"),
@@ -326,7 +344,7 @@ def aggregate_results(datasets: list[str], variants: list[str]) -> None:
     rows: list[dict[str, Any]] = []
     for dataset in datasets:
         for variant in variants:
-            summary_path = REPO_ROOT / "experiments" / f"{dataset.lower()}_dual_text_concept_graph_{variant}_3splits_nw0" / "summary.json"
+            summary_path = experiment_dir(dataset, variant) / "summary.json"
             if not summary_path.exists():
                 rows.append({"dataset": dataset, "variant": variant, "status": "missing"})
                 continue
@@ -385,7 +403,13 @@ def aggregate_results(datasets: list[str], variants: list[str]) -> None:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run dual_text + concept graph ontology ablations.")
     parser.add_argument("--datasets", nargs="+", default=["KIRC", "BRCA"], choices=sorted(DATASETS))
-    parser.add_argument("--variants", nargs="+", default=list(VARIANTS), choices=sorted(VARIANTS))
+    parser.add_argument(
+        "--variants",
+        nargs="+",
+        default=DEFAULT_VARIANTS,
+        choices=sorted(VARIANTS),
+        help="Default is ncit_do only. SNOMED/UMLS variants are retained as explicit legacy ablations.",
+    )
     parser.add_argument("--num_splits", type=int, default=3)
     parser.add_argument("--force_preprocess", action="store_true")
     parser.add_argument("--force_train", action="store_true")
@@ -397,7 +421,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     ensure_dir(LOG_ROOT)
-    build_ontology_bundles()
+    build_ontology_bundles(args.variants)
 
     for dataset in args.datasets:
         for variant in args.variants:

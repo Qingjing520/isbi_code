@@ -1,267 +1,130 @@
 # Pathology Report Extraction
 
-This folder contains the current pathology-report text pipeline for TCGA BRCA and KIRC PDFs.
+This directory contains the pathology-report preprocessing, ontology concept
+extraction, graph building, and manifest preparation pipeline used by the
+BRCA/KIRC/LUSC experiments.
 
-The active processing order is:
+## Main Pipeline
 
-1. PDF preprocessing into `Document -> Section -> Sentence`
-2. Sentence-view export
-3. Optional ontology concept extraction
-4. CONCH sentence encoding
-5. `Document -> Section -> Sentence` hierarchy graph building
-6. Optional text-graph manifest preparation for training
+The usual processing order is:
 
-Core scripts:
+1. Preprocess pathology reports into `Document -> Section -> Sentence`.
+2. Export sentence views.
+3. Extract ontology concepts with the compact NCIt+DO resources.
+4. Encode sentences with CONCH.
+5. Build text hierarchy graphs and optional concept-enhanced graphs.
+6. Build text graph manifests for downstream training.
 
-- [run_pipeline.py](D:\Tasks\isbi_code\pathology_report_extraction\run_pipeline.py)
-- [preprocess_pathology_reports.py](D:\Tasks\isbi_code\pathology_report_extraction\preprocess_pathology_reports.py)
-- [export_sentence_views.py](D:\Tasks\isbi_code\pathology_report_extraction\export_sentence_views.py)
-- [extract_ontology_concepts.py](D:\Tasks\isbi_code\pathology_report_extraction\extract_ontology_concepts.py)
-- [encode_sentence_exports_conch.py](D:\Tasks\isbi_code\pathology_report_extraction\encode_sentence_exports_conch.py)
-- [build_text_hierarchy_graphs.py](D:\Tasks\isbi_code\pathology_report_extraction\build_text_hierarchy_graphs.py)
-- [prepare_text_graph_manifest.py](D:\Tasks\isbi_code\pathology_report_extraction\prepare_text_graph_manifest.py)
+Core entry points:
 
-Config files:
+- `run_pipeline.py`: one-click pipeline from the shared YAML config.
+- `preprocess_pathology_reports.py`: report text extraction and cleaning.
+- `export_sentence_views.py`: section/sentence export before encoding.
+- `extract_ontology_concepts.py`: ontology mention matching and true-path expansion.
+- `build_sentence_ontology_graphs.py`: lightweight sentence/concept auxiliary graphs.
+- `build_text_hierarchy_graphs.py`: `Document -> Section -> Sentence` graph construction.
+- `prepare_text_graph_manifest.py`: slide-level manifest generation for training.
+- `prepare_stage_labels.py`: clinical XML label extraction and split-label expansion.
+- `visualize_hierarchy_graphs.py`: single-graph or two-dataset hierarchy visualization.
+- `pipeline_defaults.py`: shared paths, filter modes, and output subdirectory names.
+- `pdf_utils.py`: shared filesystem, PDF, and JSON helpers.
 
-- [config](D:\Tasks\isbi_code\pathology_report_extraction\config)
-- [pipeline.yaml](D:\Tasks\isbi_code\pathology_report_extraction\config\pipeline.yaml)
-- [config\README.md](D:\Tasks\isbi_code\pathology_report_extraction\config\README.md)
+Implementation layout:
 
-## Dependencies
+- `pipeline/`: PDF preprocessing, sentence export, CONCH encoding, and full pipeline orchestration.
+- `ontology/`: NCIt+DO resource building, concept extraction, ablation bundles, audits, and legacy explicit SNOMED/UMLS support.
+- `graphs/`: hierarchy graph, sentence-ontology graph, and training manifest builders.
+- `labels/`: stage-label extraction and split-label helpers.
+- `visualization/`: hierarchy graph plotting utilities.
+- `common/`: shared path defaults, PDF/OCR/text-cleaning helpers.
+
+The root-level `.py` files are compatibility entry points for existing commands
+and long-running experiment scripts. New implementation work should go into the
+purpose-specific subpackages above.
+
+## Current Paths
+
+- Python: `F:\Anaconda\envs\pytorch\python.exe`
+- Report root: `F:\Tasks\Pathology Report`
+- Project root: `F:\Tasks\isbi_code`
+- Ontology root: `F:\Tasks\Ontologies\processed`
+- Hierarchy graph root: `F:\Tasks\Pathology_Report_Hierarchy_Graphs\<BRCA|KIRC|LUSC>\<graph_type>`
+- Output root: `F:\Tasks\isbi_code\pathology_report_extraction\Output`
+- Shared config: `F:\Tasks\isbi_code\pathology_report_extraction\config\pipeline.yaml`
+
+## Common Commands
+
+Full pipeline:
 
 ```powershell
-D:\ProgrammeFiles\Anaconda\envs\Pytorch\python.exe -m pip install -r D:\Tasks\isbi_code\pathology_report_extraction\requirements.txt
+F:\Anaconda\envs\pytorch\python.exe F:\Tasks\isbi_code\pathology_report_extraction\run_pipeline.py --config F:\Tasks\isbi_code\pathology_report_extraction\config\pipeline.yaml
 ```
 
-Main packages:
-
-- `PyMuPDF`
-- `rapidocr_onnxruntime`
-- `opencv-python`
-- `Pillow`
-- `numpy`
-- `torch`
-- `timm`
-- `transformers`
-- `PyYAML`
-
-No external Tesseract installation is required.
-
-## Default Paths
-
-- Input PDF root:
-  - `D:\Tasks\Pathology Report`
-- Output root:
-  - `D:\Tasks\isbi_code\pathology_report_extraction\Output`
-- Master config:
-  - `D:\Tasks\isbi_code\pathology_report_extraction\config\pipeline.yaml`
-
-## Recommended One-Click Run
-
-This is the recommended entry point for the full pipeline:
+Debug a small subset:
 
 ```powershell
-D:\ProgrammeFiles\Anaconda\envs\Pytorch\python.exe D:\Tasks\isbi_code\pathology_report_extraction\run_pipeline.py --config "D:\Tasks\isbi_code\pathology_report_extraction\config\pipeline.yaml"
+F:\Anaconda\envs\pytorch\python.exe F:\Tasks\isbi_code\pathology_report_extraction\run_pipeline.py --config F:\Tasks\isbi_code\pathology_report_extraction\config\pipeline.yaml --limit 10
 ```
 
-Quick debug run:
+Run one stage:
 
 ```powershell
-D:\ProgrammeFiles\Anaconda\envs\Pytorch\python.exe D:\Tasks\isbi_code\pathology_report_extraction\run_pipeline.py --config "D:\Tasks\isbi_code\pathology_report_extraction\config\pipeline.yaml" --limit 10
+F:\Anaconda\envs\pytorch\python.exe F:\Tasks\isbi_code\pathology_report_extraction\extract_ontology_concepts.py --config F:\Tasks\isbi_code\pathology_report_extraction\config\pipeline.yaml
 ```
 
-Temporary mode override without editing YAML:
+Build training manifests after graphs are ready:
 
 ```powershell
-D:\ProgrammeFiles\Anaconda\envs\Pytorch\python.exe D:\Tasks\isbi_code\pathology_report_extraction\run_pipeline.py --config "D:\Tasks\isbi_code\pathology_report_extraction\config\pipeline.yaml" --filter_mode full
+F:\Anaconda\envs\pytorch\python.exe F:\Tasks\isbi_code\pathology_report_extraction\prepare_text_graph_manifest.py --config F:\Tasks\isbi_code\pathology_report_extraction\config\pipeline.yaml
 ```
 
-Optional manifest preparation after graphs are ready:
+Visualize one hierarchy graph:
 
 ```powershell
-D:\ProgrammeFiles\Anaconda\envs\Pytorch\python.exe D:\Tasks\isbi_code\pathology_report_extraction\prepare_text_graph_manifest.py --config "D:\Tasks\isbi_code\pathology_report_extraction\config\pipeline.yaml"
+F:\Anaconda\envs\pytorch\python.exe F:\Tasks\isbi_code\pathology_report_extraction\visualize_hierarchy_graphs.py single
 ```
 
-## Single-YAML Design
-
-All stage settings now live in one file:
-
-- [pipeline.yaml](D:\Tasks\isbi_code\pathology_report_extraction\config\pipeline.yaml)
-
-The YAML is ordered by processing sequence:
-
-1. `defaults`
-2. `preprocess`
-3. `export_sentence_views`
-4. `extract_ontology_concepts`
-5. `encode_sentence_exports_conch`
-6. `build_text_hierarchy_graphs`
-7. `prepare_text_graph_manifest`
-
-Each stage has:
-
-- `enabled`: whether the stage runs in the one-click pipeline
-- stage-specific parameters
-- `output_subdirs`: output folder names that switch automatically with `filter_mode`
-
-Important mode switch:
-
-- `preprocess.filter_mode`
-
-Choices:
-
-- `masked`
-- `no_diagnosis`
-- `no_diagnosis_masked`
-- `full`
-
-`masked` is the recommended default for the pathology stage-classification main experiment.
-
-## Running Individual Stages
-
-Each stage script still supports `--config`, and it can read the shared [pipeline.yaml](D:\Tasks\isbi_code\pathology_report_extraction\config\pipeline.yaml).
-
-Preprocess only:
+Visualize a BRCA/KIRC comparison:
 
 ```powershell
-D:\ProgrammeFiles\Anaconda\envs\Pytorch\python.exe D:\Tasks\isbi_code\pathology_report_extraction\preprocess_pathology_reports.py --config "D:\Tasks\isbi_code\pathology_report_extraction\config\pipeline.yaml"
-```
-
-Sentence export only:
-
-```powershell
-D:\ProgrammeFiles\Anaconda\envs\Pytorch\python.exe D:\Tasks\isbi_code\pathology_report_extraction\export_sentence_views.py --config "D:\Tasks\isbi_code\pathology_report_extraction\config\pipeline.yaml"
-```
-
-Concept extraction only:
-
-```powershell
-D:\ProgrammeFiles\Anaconda\envs\Pytorch\python.exe D:\Tasks\isbi_code\pathology_report_extraction\extract_ontology_concepts.py --config "D:\Tasks\isbi_code\pathology_report_extraction\config\pipeline.yaml"
-```
-
-Ontology audit only:
-
-```powershell
-D:\ProgrammeFiles\Anaconda\envs\Pytorch\python.exe D:\Tasks\isbi_code\pathology_report_extraction\audit_ontology_concepts.py `
-  --cohort_name KIRC `
-  --annotation_dir "D:\Tasks\isbi_code\pathology_report_extraction\Output\concept_annotations_masked\KIRC" `
-  --graph_dir "D:\Tasks\isbi_code\pathology_report_extraction\Output\text_concept_graphs_masked\KIRC" `
-  --cohort_name BRCA `
-  --annotation_dir "D:\Tasks\isbi_code\pathology_report_extraction\Output\concept_annotations_masked\BRCA" `
-  --graph_dir "D:\Tasks\isbi_code\pathology_report_extraction\Output\text_concept_graphs_masked\BRCA" `
-  --output_json "D:\Tasks\isbi_code\pathology_report_extraction\Output\ontology_audits\ncit_pathology_subset_masked_brca_kirc_summary.json"
-```
-
-CONCH encoding only:
-
-```powershell
-D:\ProgrammeFiles\Anaconda\envs\Pytorch\python.exe D:\Tasks\isbi_code\pathology_report_extraction\encode_sentence_exports_conch.py --config "D:\Tasks\isbi_code\pathology_report_extraction\config\pipeline.yaml"
-```
-
-Graph build only:
-
-```powershell
-D:\ProgrammeFiles\Anaconda\envs\Pytorch\python.exe D:\Tasks\isbi_code\pathology_report_extraction\build_text_hierarchy_graphs.py --config "D:\Tasks\isbi_code\pathology_report_extraction\config\pipeline.yaml"
-```
-
-Manifest only:
-
-```powershell
-D:\ProgrammeFiles\Anaconda\envs\Pytorch\python.exe D:\Tasks\isbi_code\pathology_report_extraction\prepare_text_graph_manifest.py --config "D:\Tasks\isbi_code\pathology_report_extraction\config\pipeline.yaml"
+F:\Anaconda\envs\pytorch\python.exe F:\Tasks\isbi_code\pathology_report_extraction\visualize_hierarchy_graphs.py compare
 ```
 
 ## Output Layout
 
-For the current default `masked` mode, the pipeline writes:
+The default `masked` run writes intermediate artifacts under `Output` and keeps
+training-ready hierarchy graph inputs in `F:\Tasks\Pathology_Report_Hierarchy_Graphs`:
 
 ```text
-D:\Tasks\isbi_code\pathology_report_extraction\Output
-|-- pathology_report_preprocessed_masked
-|   |-- run_summary.json
-|   |-- preprocess.log
-|   |-- BRCA\*.json
-|   |-- KIRC\*.json
-|-- sentence_exports_masked
-|   |-- run_summary.json
-|   |-- export.log
-|   |-- BRCA\*.json / *.txt
-|   |-- KIRC\*.json / *.txt
-|-- concept_annotations_masked
-|   |-- run_summary.json
-|   |-- concepts.log
-|   |-- BRCA\*.json
-|   |-- KIRC\*.json
-|-- sentence_embeddings_conch_masked
-|   |-- run_summary.json
-|   |-- encode.log
-|   |-- BRCA\*.pt / *.json
-|   |-- KIRC\*.pt / *.json
-|-- text_hierarchy_graphs_masked
-|   |-- run_summary.json
-|   |-- graph.log
-|   |-- BRCA\*.pt / *.json
-|   |-- KIRC\*.pt / *.json
-|-- manifests
-|   |-- text_graph_manifest_masked.csv
-|   |-- text_graph_manifest_masked_summary.json
-|-- pipeline_run_summary_masked.json
+pathology_report_preprocessed_masked/
+sentence_exports_masked/
+concept_annotations_masked/
+sentence_embeddings_conch_masked/
+manifests/
+F:\Tasks\Pathology_Report_Hierarchy_Graphs\
+  BRCA\
+    basic_hierarchy\
+    ontology_concept_hierarchy\
+    stage_keyword_word_hierarchy\
+    stage_keyword_word_ontology_hierarchy\
+  KIRC\
+    basic_hierarchy\
+    ontology_concept_hierarchy\
+    stage_keyword_word_hierarchy\
+    stage_keyword_word_ontology_hierarchy\
+  LUSC\
+    basic_hierarchy\
+    ontology_concept_hierarchy\
+    stage_keyword_word_hierarchy\
+    stage_keyword_word_ontology_hierarchy\
 ```
 
-If you switch `filter_mode`, the stage output subfolders switch automatically.
+Ontology outputs should use the current `ncit_do` bundle by default. Older
+SNOMED/UMLS variants are retained only for explicit legacy ablations.
 
-## File Mapping
+## Notes
 
-For one report sample:
-
-- `Output\pathology_report_preprocessed_<mode>\<report>.json`
-  - structured text result
-  - keeps `Document -> Section -> Sentence`
-- `Output\sentence_exports_<mode>\<report>.json`
-  - flattened sentence view before encoding
-  - keeps `sentences`, `sentence_to_section`, and section spans
-- `Output\sentence_embeddings_conch_<mode>\<report>.pt`
-  - actual CONCH sentence embeddings for that report
-  - one `.pt` corresponds to one report, not one sentence
-  - shape is `(num_sentences, 512)`
-- `Output\sentence_embeddings_conch_<mode>\<report>.json`
-  - metadata for the same `.pt`
-  - maps embedding rows back to sentences and sections
-- `Output\concept_annotations_<mode>\<report>.json`
-  - lightweight ontology / concept annotations aligned to the sentence view
-  - keeps direct mentions, true-path-expanded concepts, and concept-concept ontology links
-- `Output\ontology_audits\*.json`
-  - cohort-level ontology audit summaries
-  - useful for coverage checks, top concept review, and BRCA/KIRC concept comparison
-- `Output\text_hierarchy_graphs_<mode>\<report>.pt`
-  - graph tensors for training
-  - can remain plain hierarchy graphs, or become concept-enhanced graphs when `attach_concepts: true`
-- `Output\text_hierarchy_graphs_<mode>\<report>.json`
-  - readable node and edge metadata
-
-Example:
-
-- if a report has `65` sentences, its CONCH tensor shape is `(65, 512)`
-- row `37` in the tensor is sentence `37`
-- the companion metadata JSON tells you which section sentence `37` belongs to
-
-## Training Prep
-
-The next-stage helper script is:
-
-- [prepare_text_graph_manifest.py](D:\Tasks\isbi_code\pathology_report_extraction\prepare_text_graph_manifest.py)
-
-It matches case-level text graphs to slide-level labels and writes a manifest CSV for training.
-
-The corresponding PyTorch dataset wrapper is:
-
-- [text_graph_dataset.py](D:\Tasks\isbi_code\datasets\text_graph_dataset.py)
-
-This dataset reads one row per sample from the manifest and loads:
-
-- graph tensor dict from `graph_pt`
-- classification label from `label`
-- metadata such as `case_id`, `slide_id`, and `dataset`
-
-## Workflow
-
-See [workflow_overview.md](D:\Tasks\isbi_code\pathology_report_extraction\workflow_overview.md) for the PDF-to-graph overview.
+- Keep generated intermediate data under `Output/`; do not commit it.
+- Use `config/pipeline.yaml` as the source of truth for stage parameters.
+- For new experiments, prefer the ordered experiment tools under
+  `F:\Tasks\isbi_code\tools`.

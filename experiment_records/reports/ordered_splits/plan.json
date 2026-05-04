@@ -1,0 +1,72 @@
+{
+  "created_at": "2026-05-04 08:25:46",
+  "datasets": [
+    "BRCA",
+    "KIRC",
+    "LUSC"
+  ],
+  "methods": [
+    "sentence-only"
+  ],
+  "new_splits_per_task": 5,
+  "split_offset": 0,
+  "ontology_variant": "ncit_do",
+  "hierarchy_ontology_graph_type": "ontology_concept_hierarchy",
+  "experiment_tag": "identity",
+  "fusion_mode": "residual",
+  "use_section_title_embedding": true,
+  "hierarchy_graph_weight_max": 0.1,
+  "ontology_graph_weight_max": 0.1,
+  "graph_weight_target": 0.0,
+  "tasks": [
+    {
+      "dataset": "BRCA",
+      "method": "sentence-only",
+      "run_dir": "F:\\Tasks\\isbi_code\\experiments\\BRCA\\sentence-only\\runs\\brca_sentence_only_identity_0splits",
+      "config_path": "F:\\Tasks\\isbi_code\\configs\\generated\\ordered_splits\\brca_sentence_only_identity.yaml",
+      "graph_manifest_template": "",
+      "completed_before": [],
+      "requested_split_indices": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "experiment_tag": "identity"
+    },
+    {
+      "dataset": "KIRC",
+      "method": "sentence-only",
+      "run_dir": "F:\\Tasks\\isbi_code\\experiments\\KIRC\\sentence-only\\runs\\kirc_sentence_only_identity_0splits",
+      "config_path": "F:\\Tasks\\isbi_code\\configs\\generated\\ordered_splits\\kirc_sentence_only_identity.yaml",
+      "graph_manifest_template": "",
+      "completed_before": [],
+      "requested_split_indices": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "experiment_tag": "identity"
+    },
+    {
+      "dataset": "LUSC",
+      "method": "sentence-only",
+      "run_dir": "F:\\Tasks\\isbi_code\\experiments\\LUSC\\sentence-only\\runs\\lusc_sentence_only_identity_0splits",
+      "config_path": "F:\\Tasks\\isbi_code\\configs\\generated\\ordered_splits\\lusc_sentence_only_identity.yaml",
+      "graph_manifest_template": "",
+      "completed_before": [],
+      "requested_split_indices": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "experiment_tag": "identity"
+    }
+  ],
+  "skipped": []
+}
