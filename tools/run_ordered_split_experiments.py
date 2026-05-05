@@ -994,7 +994,16 @@ def rename_run_dir_to_completed_count(task: Task) -> Task:
         return task
 
     ensure_dir(target.parent)
-    task.run_dir.rename(target)
+    try:
+        task.run_dir.rename(target)
+    except OSError as exc:
+        print(
+            f"[{now()}] warning: could not rename run folder "
+            f"{task.run_dir.name} -> {target.name}: {exc}. "
+            "Keeping the current folder name and continuing.",
+            flush=True,
+        )
+        return task
     print(f"[{now()}] renamed run folder: {task.run_dir.name} -> {target.name}", flush=True)
     return replace(task, run_name=target.name, run_dir=target)
 
